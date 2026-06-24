@@ -1,0 +1,1 @@
+# Detector-de-kanjis-n1
