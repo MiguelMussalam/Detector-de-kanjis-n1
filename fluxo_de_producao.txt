@@ -1,0 +1,8 @@
+1. baixar fontes
+2. verificar compatibilidade
+3. criar imagens de kanjis para o treinamento da Yolo
+    3.1 Recorte aleatório de manga do dataset manga109
+    3.2 Renderizar bloco de texto (mix de kanji, hiragana, katakana) sobre o fundo
+    3.3 Aplicar distorções
+    3.4 Salvar imagem + arquivo de label YOLO com as bboxes de cada caractere
+4. Treinar a YOLO
