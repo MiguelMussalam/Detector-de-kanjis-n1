@@ -4,5 +4,5 @@
     3.1 Recorte aleatório de manga do dataset manga109
     3.2 Renderizar bloco de texto (mix de kanji, hiragana, katakana) sobre o fundo
     3.3 Aplicar distorções
-    3.4 Salvar imagem + arquivo de label YOLO com as bboxes de cada caractere
+    3.4 Salvar imagem + arquivo de label YOLO com as bboxes de cada caractere (valor inicial: 5k de páginas)
 4. Treinar a YOLO
