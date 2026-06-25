@@ -12,6 +12,7 @@ kanji_levels: dict = {
 
 def get_kanjis(kanji_level) -> dict:
     response = requests.get(URL)
+    response.raise_for_status()
     kanjis = response.json()
 
     if (kanji_level == ''):
