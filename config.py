@@ -32,4 +32,5 @@ FONTES_URL = {
 }
 
 # Parâmetros de geração
-CROP_SIZE       = 640
+CROP_SIZE             = 640
+PAGES_AMOUNT    = 10
