@@ -2,21 +2,7 @@ import os
 import requests
 from fontTools.ttLib import TTFont
 from kanjis import get_kanjis
-
-FONTES = {
-    "Shippori Antique":         "https://raw.githubusercontent.com/fontdasu/ShipporiAntique/master/fonts/ttf/ShipporiAntique-Regular.ttf",
-    "BIZ-UDPGothic-Regular":    "https://raw.githubusercontent.com/google/fonts/main/ofl/bizudpgothic/BIZUDPGothic-Regular.ttf",
-    "BIZ-UDPGothic-Bold":       "https://raw.githubusercontent.com/google/fonts/main/ofl/bizudpgothic/BIZUDPGothic-Bold.ttf",
-    "BIZ-UDPMincho-Regular":    "https://raw.githubusercontent.com/google/fonts/main/ofl/bizudpmincho/BIZUDPMincho-Regular.ttf",
-    "Klee-One-Regular":         "https://raw.githubusercontent.com/google/fonts/main/ofl/kleeone/KleeOne-Regular.ttf",
-    "Klee-One-SemiBold":        "https://raw.githubusercontent.com/google/fonts/main/ofl/kleeone/KleeOne-SemiBold.ttf",
-    "Hina-Mincho-Regular":      "https://raw.githubusercontent.com/google/fonts/main/ofl/hinamincho/HinaMincho-Regular.ttf",
-    "Yusei-Magic-Regular":      "https://raw.githubusercontent.com/google/fonts/main/ofl/yuseimagic/YuseiMagic-Regular.ttf",
-    "Dela-Gothic-One":          "https://raw.githubusercontent.com/google/fonts/main/ofl/delagothicone/DelaGothicOne-Regular.ttf",
-    "Reggae-One":               "https://raw.githubusercontent.com/google/fonts/main/ofl/reggaeone/ReggaeOne-Regular.ttf",
-}
-
-DIRETORIO_SAIDA = os.path.join("assets", "fonts")
+from config import FONTES_URL, ASSETS_DIR
 
 def download_fonts(fontes, diretorio_destino):
     os.makedirs(diretorio_destino, exist_ok=True)
@@ -41,9 +27,9 @@ def download_fonts(fontes, diretorio_destino):
 
 def verify_fonts_compatibility():
     kanjis_n1 = get_kanjis("n1")
-    for fonts in os.listdir(DIRETORIO_SAIDA):
+    for fonts in os.listdir(ASSETS_DIR):
         kanjis_not_supported = []
-        font = TTFont(os.path.join(DIRETORIO_SAIDA, fonts))
+        font = TTFont(os.path.join(ASSETS_DIR, fonts))
         font_cmap = font.getBestCmap()
         for kanji in kanjis_n1:
             if ord(kanji) not in font_cmap:
@@ -54,7 +40,6 @@ def verify_fonts_compatibility():
             print(f"Fonte {fonts} suporta todos os kanjis N1")
 
 
-
 if __name__ == "__main__":
-    download_fonts(FONTES, DIRETORIO_SAIDA)
+    download_fonts(FONTES_URL, ASSETS_DIR)
     verify_fonts_compatibility()

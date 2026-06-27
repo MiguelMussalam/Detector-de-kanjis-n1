@@ -1,6 +1,6 @@
 import requests
+from config import KANJI_DATA_URL
 
-URL = "https://raw.githubusercontent.com/davidluzgouveia/kanji-data/master/kanji.json"
 kanji_levels: dict = {
     "n1": 1,
     "n2": 2,
@@ -11,7 +11,7 @@ kanji_levels: dict = {
 
 
 def get_kanjis(kanji_level) -> dict:
-    response = requests.get(URL)
+    response = requests.get(KANJI_DATA_URL)
     response.raise_for_status()
     kanjis = response.json()
 
