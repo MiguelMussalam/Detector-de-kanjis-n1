@@ -1,8 +1,9 @@
 import os
+import glob
 import requests
 from fontTools.ttLib import TTFont
-from kanjis import get_kanjis
-from config import FONTES_URL, ASSETS_DIR
+from src.helper.kanjis import get_kanjis
+from config import FONTES_URL, ASSETS_DIR, FONTS_DIR
 
 def download_fonts(fontes, diretorio_destino):
     os.makedirs(diretorio_destino, exist_ok=True)
@@ -25,21 +26,25 @@ def download_fonts(fontes, diretorio_destino):
         except requests.exceptions.RequestException as e:
             print(f"erro: {nome}: {e}")
 
-def verify_fonts_compatibility():
-    kanjis_n1 = get_kanjis("n1")
-    for fonts in os.listdir(ASSETS_DIR):
-        kanjis_not_supported = []
-        font = TTFont(os.path.join(ASSETS_DIR, fonts))
-        font_cmap = font.getBestCmap()
-        for kanji in kanjis_n1:
-            if ord(kanji) not in font_cmap:
-                kanjis_not_supported.append(kanji)
-        if kanjis_not_supported:
-            print(f"Fonte {fonts} não suporta os seguintes kanjis: {', '.join(kanjis_not_supported)}")
-        else:
-            print(f"Fonte {fonts} suporta todos os kanjis N1")
+def get_fonts_list():
+    return glob.glob(os.path.join(FONTS_DIR, "*.ttf"))
 
+def verify_fonts_compatibility(kanji_level = ""):
+    kanjis  = get_kanjis(kanji_level)
+    font_files = get_fonts_list()
+
+    for font_path in font_files:
+        font      = TTFont(font_path)
+        font_cmap = font.getBestCmap()
+
+        ausentes = [k for k in kanjis if ord(k) not in font_cmap]
+
+        nome = os.path.basename(font_path)
+        if ausentes:
+            print(f"{nome}: {len(ausentes)} kanjis ausentes — {''.join(ausentes)}")
+        else:
+            print(f"{nome}: suporta todos os kanjis {kanji_level}")
 
 if __name__ == "__main__":
-    download_fonts(FONTES_URL, ASSETS_DIR)
-    verify_fonts_compatibility()
+    download_fonts(FONTES_URL, FONTS_DIR)
+    verify_fonts_compatibility("")
