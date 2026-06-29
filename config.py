@@ -10,7 +10,24 @@ FONTS_DIR       = os.path.join(ASSETS_DIR, "fonts")
 
 # Manga109
 MANGA109_DIR    = os.path.join(DATA_DIR, "raw", "Manga109")
-MANGA109_IMAGES = os.path.join(MANGA109_DIR, "images")
+
+def _buscar_manga109_images():
+    # Caminho padrão local
+    caminho_local = os.path.join(MANGA109_DIR, "images")
+    if os.path.exists(caminho_local):
+        return caminho_local
+
+    # Busca dinâmica no ambiente Kaggle
+    kaggle_input = "/kaggle/input"
+    if os.path.exists(kaggle_input):
+        for root, dirs, _ in os.walk(kaggle_input):
+            if "images" in dirs and "manga109" in root.lower():
+                found_path = os.path.join(root, "images")
+                print(f"[INFO] Manga109 images encontradas no Kaggle: {found_path}")
+                return found_path
+    return caminho_local
+
+MANGA109_IMAGES = _buscar_manga109_images()
 
 # Dataset sintético
 SYNTHETIC_DIR   = os.path.join(DATA_DIR, "synthetic")

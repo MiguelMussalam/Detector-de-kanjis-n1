@@ -16,7 +16,14 @@ from config import (
     TRAIN_IMG_DIR, VAL_IMG_DIR,
     TRAIN_LBL_DIR, VAL_LBL_DIR,
     PAGES_AMOUNT, VAL_SPLIT,
+    FONTES_URL, FONTS_DIR
 )
+
+# Garantir o download das fontes ANTES de importar o manga109
+from src.helper.fonts import download_fonts
+print("[INFO] Verificando fontes...")
+download_fonts(FONTES_URL, FONTS_DIR)
+
 from src.helper.manga109 import create_synthetic_manga_images
 
 
