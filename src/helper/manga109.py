@@ -151,25 +151,92 @@ def render_kanji(crop: Image.Image):
     
 
 
-def create_synthetic_manga_images():
+def bbox_para_yolo(x: int, y: int, w: int, h: int, img_size: int) -> str:
+    """
+    Converte uma bounding box absoluta (x, y, w, h) para o formato YOLO
+    normalizado: <class_id> <cx> <cy> <w> <h>, todos em [0, 1].
+    Classe 0 = kanji/hiragana/katakana.
+    """
+    cx = (x + w / 2) / img_size
+    cy = (y + h / 2) / img_size
+    wn = w / img_size
+    hn = h / img_size
+    # Clamp para garantir que valores fiquem dentro de [0, 1]
+    cx = max(0.0, min(1.0, cx))
+    cy = max(0.0, min(1.0, cy))
+    wn = max(0.0, min(1.0, wn))
+    hn = max(0.0, min(1.0, hn))
+    return f"0 {cx:.6f} {cy:.6f} {wn:.6f} {hn:.6f}"
+
+
+def save_page(imagem: Image.Image, bboxes: list, img_dir: str, lbl_dir: str, idx: int) -> None:
+    """
+    Salva a imagem como PNG e o arquivo de label YOLO (.txt).
+
+    Args:
+        imagem:  imagem PIL gerada e degradada
+        bboxes:  lista de (x, y, w, h) absolutas em pixels
+        img_dir: diretório destino das imagens (ex: data/dataset/images/train)
+        lbl_dir: diretório destino dos labels  (ex: data/dataset/labels/train)
+        idx:     índice único da página (para nomear o arquivo)
+    """
+    os.makedirs(img_dir, exist_ok=True)
+    os.makedirs(lbl_dir, exist_ok=True)
+
+    nome = f"page_{idx:06d}"
+    img_path = os.path.join(img_dir, f"{nome}.png")
+    lbl_path = os.path.join(lbl_dir, f"{nome}.txt")
+
+    imagem.save(img_path)
+
+    with open(lbl_path, "w", encoding="utf-8") as f:
+        for (x, y, w, h) in bboxes:
+            f.write(bbox_para_yolo(x, y, w, h, CROP_SIZE) + "\n")
+
+
+def create_synthetic_manga_images(
+    img_dir: str,
+    lbl_dir: str,
+    amount: int,
+    start_idx: int = 0,
+) -> int:
+    """
+    Gera `amount` páginas sintéticas, salvando imagem (.png) e label YOLO (.txt).
+
+    Args:
+        img_dir:   diretório destino das imagens
+        lbl_dir:   diretório destino dos labels
+        amount:    quantidade de páginas a gerar
+        start_idx: índice inicial para nomeação dos arquivos
+
+    Returns:
+        Número de páginas efetivamente geradas.
+    """
     pages_created = 0
-    while pages_created < PAGES_AMOUNT:
+    attempts = 0
+    max_attempts = amount * 20  # evita loop infinito
+
+    while pages_created < amount and attempts < max_attempts:
+        attempts += 1
         crop = get_croped_image()
 
         resultado = render_kanji(crop)
         if resultado is None:
             continue
-        else:
-            pages_created += 1
 
         imagem, bboxes = resultado
-        imagem = aplicar_degradacoes(imagem)
-        imagem.show()
+        if not bboxes:
+            continue  # descarta página sem nenhum caractere detectado
 
+        imagem = aplicar_degradacoes(imagem)
+        save_page(imagem, bboxes, img_dir, lbl_dir, start_idx + pages_created)
+        pages_created += 1
+
+    return pages_created
 
 
 if __name__ == "__main__":
-    
-    for page in pages:
-        print(page)
-    create_synthetic_manga_images()
+    from config import TRAIN_IMG_DIR, TRAIN_LBL_DIR, PAGES_AMOUNT
+    print(f"Gerando {PAGES_AMOUNT} páginas de teste em {TRAIN_IMG_DIR}...")
+    n = create_synthetic_manga_images(TRAIN_IMG_DIR, TRAIN_LBL_DIR, PAGES_AMOUNT)
+    print(f"Geradas: {n} páginas.")

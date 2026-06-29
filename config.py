@@ -16,6 +16,14 @@ MANGA109_IMAGES = os.path.join(MANGA109_DIR, "images")
 SYNTHETIC_DIR   = os.path.join(DATA_DIR, "synthetic")
 PAGES_DIR       = os.path.join(SYNTHETIC_DIR, "pages")
 
+# Dataset YOLO (estrutura images/labels train/val)
+DATASET_DIR     = os.path.join(DATA_DIR, "dataset")
+TRAIN_IMG_DIR   = os.path.join(DATASET_DIR, "images", "train")
+VAL_IMG_DIR     = os.path.join(DATASET_DIR, "images", "val")
+TRAIN_LBL_DIR   = os.path.join(DATASET_DIR, "labels", "train")
+VAL_LBL_DIR     = os.path.join(DATASET_DIR, "labels", "val")
+VAL_SPLIT       = 0.1          # 10 % das páginas vão para validação
+
 # URLs externas
 KANJI_DATA_URL  = "https://raw.githubusercontent.com/davidluzgouveia/kanji-data/master/kanji.json"
 KANJI_DATA_CACHE = os.path.join(ASSETS_DIR, "kanji.json")
@@ -32,12 +40,22 @@ FONTES_URL = {
 
 # Parâmetros de geração
 CROP_SIZE       = 640
-PAGES_AMOUNT    = 10
+PAGES_AMOUNT    = 5000         # páginas sintéticas para o dataset de treino
 GAP_CHAR        = 4
-GAP_COL         = 8 
+GAP_COL         = 8
+
+# Treino YOLO
+YOLO_MODEL      = "yolo26n.pt"
+EPOCHS          = 50
+IMGSZ           = 640
+BATCH           = 16
+KAGGLE_WORKERS  = 2            # T4/P100 têm 2 vCPUs
+LOCAL_WORKERS   = 4
+PROJECT_NAME    = "kanji_detector"
+KAGGLE_DATASET  = "kanji-detector-dataset"  # nome do dataset no Kaggle
 
 # Restrição de região e posicionamento de texto
-LIMITE_DESVIO_REGIAO = 20  # desvio padrão máximo aceitável para posicionamento de texto
+LIMITE_DESVIO_REGIAO = 25  # desvio padrão máximo aceitável para posicionamento de texto
 MAX_TENTATIVAS_POSICAO = 10
 
 # Degradações 2D — ordem de aplicação: geometria → tinta → scanner
