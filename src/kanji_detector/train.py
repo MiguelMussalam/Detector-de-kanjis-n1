@@ -98,12 +98,29 @@ def treinar():
 
     # Resolve paths e workers conforme ambiente
     if IS_KAGGLE:
-        data_yaml = resolver_paths_kaggle(KAGGLE_DATASET)
-        workers   = KAGGLE_WORKERS
+        workers = KAGGLE_WORKERS
         # Modelo: primeiro tenta o arquivo local, depois deixa a ultralytics baixar
         model_path = os.path.join("/kaggle/working", YOLO_MODEL)
         if not os.path.exists(model_path):
             model_path = YOLO_MODEL  # ultralytics faz o download automatico
+
+        # Se o dataset foi gerado localmente na sessao do Kaggle (Opcao 1)
+        dataset_local_yaml = os.path.join(DATASET_DIR, "dataset.yaml")
+        # Se o dataset foi adicionado como Input pronto no Kaggle (Opcao 2)
+        kaggle_input_dir = f"/kaggle/input/{KAGGLE_DATASET}"
+
+        if os.path.exists(kaggle_input_dir):
+            print(f"[INFO] Utilizando dataset de entrada do Kaggle: {kaggle_input_dir}")
+            data_yaml = resolver_paths_kaggle(KAGGLE_DATASET)
+        elif os.path.exists(dataset_local_yaml):
+            print(f"[INFO] Utilizando dataset gerado na sessao (/kaggle/working): {dataset_local_yaml}")
+            data_yaml = dataset_local_yaml
+        else:
+            raise FileNotFoundError(
+                f"Nao foi encontrado nenhum dataset de treino no Kaggle!\n"
+                f"1. Se gerou no Kaggle, certifique-se de ter rodado o generate_pages.py primeiro.\n"
+                f"2. Se enviou o dataset pronto, verifique se o adicionou como Input com o nome '{KAGGLE_DATASET}'."
+            )
     else:
         data_yaml = resolver_paths_local()
         workers   = LOCAL_WORKERS
