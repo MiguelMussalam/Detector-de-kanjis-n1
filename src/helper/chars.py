@@ -15,6 +15,12 @@ def get_supported_kanjis_from_fonts():
     codepoints_list = []
     font_list = get_fonts_list()
 
+    if not font_list:
+        raise FileNotFoundError(
+            "Nenhuma fonte (.ttf) encontrada na pasta de assets/fonts/. "
+            "Verifique se o download das fontes foi executado corretamente."
+        )
+
     for font in font_list:
         cmap = TTFont(font).getBestCmap()
         codepoints_list.append(set(cmap.keys()))
