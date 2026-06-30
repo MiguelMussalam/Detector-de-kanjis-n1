@@ -27,10 +27,14 @@ download_fonts(FONTES_URL, FONTS_DIR)
 from src.helper.manga109 import create_synthetic_manga_images
 
 
+import shutil
+
 def criar_estrutura():
     for d in [TRAIN_IMG_DIR, VAL_IMG_DIR, TRAIN_LBL_DIR, VAL_LBL_DIR]:
+        if os.path.exists(d):
+            shutil.rmtree(d)
         os.makedirs(d, exist_ok=True)
-    print("Estrutura de pastas criada.")
+    print("Estrutura de pastas limpa e criada.")
 
 
 def gerar_dataset_yaml():
