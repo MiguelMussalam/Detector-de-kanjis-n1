@@ -57,7 +57,7 @@ FONTES_URL = {
 
 # Parâmetros de geração
 CROP_SIZE       = 640
-PAGES_AMOUNT    = 5000         # páginas sintéticas para o dataset de treino
+PAGES_AMOUNT    = 12000         # páginas sintéticas para o dataset de treino
 GAP_CHAR        = 4
 GAP_COL         = 8
 
