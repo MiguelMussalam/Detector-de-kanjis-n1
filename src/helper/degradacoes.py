@@ -40,7 +40,7 @@ _pipeline_geometrica = A.Compose([
         border_mode=cv2.BORDER_REPLICATE,
         p=ROTATE_PROB,
     ),
-])
+], bbox_params=A.BboxParams(format='coco', label_fields=['class_labels']))
 
 _pipeline_scanner = A.Compose([
     A.GaussNoise(
@@ -100,21 +100,50 @@ def _aplicar_blur(arr: np.ndarray) -> np.ndarray:
 # API publica
 # ---------------------------------------------------------------------------
 
-def aplicar_degradacoes(imagem: Image.Image) -> Image.Image:
+def aplicar_degradacoes(imagem: Image.Image, bboxes: list = None) -> tuple:
     """
     Aplica o pipeline completo de degradacao 2D a uma imagem PIL.
+    Se bboxes forem fornecidas (no formato COCO: x_min, y_min, width, height),
+    elas também serão transformadas pelo pipeline geométrico.
 
     Ordem cronologica fisica:
       1. Distorcoes geometricas  (curvatura/desalinhamento da pagina ao escanear)
       2. Morfologia de tinta     (erosao XOR dilatacao -- defeitos de impressao)
       3. Ruido de scanner        (GaussNoise + SaltAndPepper + Blur -- sensor optico)
 
-    Retorna uma nova imagem PIL com as mesmas dimensoes da entrada.
+    Retorna uma tupla (nova_imagem_pil, bboxes_transformadas).
     """
     arr = _pil_to_np(imagem)
+    h_img, w_img = arr.shape[:2]
 
     # 1 — Geometria
-    arr = _pipeline_geometrica(image=arr)["image"]
+    if bboxes is not None and len(bboxes) > 0:
+        # Validar e ajustar coordenadas das bboxes para os limites da imagem
+        # para evitar erros de validação do Albumentations.
+        valid_bboxes = []
+        for x, y, w, h in bboxes:
+            x_min = max(0.0, min(float(w_img - 1), float(x)))
+            y_min = max(0.0, min(float(h_img - 1), float(y)))
+            x_max = max(0.0, min(float(w_img), float(x + w)))
+            y_max = max(0.0, min(float(h_img), float(y + h)))
+            
+            new_w = x_max - x_min
+            new_h = y_max - y_min
+            
+            if new_w > 0 and new_h > 0:
+                valid_bboxes.append([x_min, y_min, new_w, new_h])
+
+        if len(valid_bboxes) > 0:
+            class_labels = [0] * len(valid_bboxes)
+            transformed = _pipeline_geometrica(image=arr, bboxes=valid_bboxes, class_labels=class_labels)
+            arr = transformed["image"]
+            bboxes = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in transformed["bboxes"]]
+        else:
+            arr = _pipeline_geometrica(image=arr)["image"]
+            bboxes = []
+    else:
+        arr = _pipeline_geometrica(image=arr)["image"]
+        bboxes = None
 
     # 2 — Morfologia (tinta)
     arr = _aplicar_morfologia(arr)
@@ -123,4 +152,4 @@ def aplicar_degradacoes(imagem: Image.Image) -> Image.Image:
     arr = _pipeline_scanner(image=arr)["image"]
     arr = _aplicar_blur(arr)
 
-    return _np_to_pil(arr)
+    return _np_to_pil(arr), bboxes

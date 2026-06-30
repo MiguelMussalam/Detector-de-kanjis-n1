@@ -2,7 +2,7 @@ import os
 import random
 import glob
 from PIL import Image, ImageDraw, ImageFont, ImageStat
-from config import MANGA109_IMAGES, PAGES_DIR, CROP_SIZE, PAGES_AMOUNT, FONTS_DIR, LIMITE_DESVIO_REGIAO, MAX_TENTATIVAS_POSICAO
+from config import MANGA109_IMAGES, PAGES_DIR, CROP_SIZE, PAGES_AMOUNT, FONTS_DIR, LIMITE_DESVIO_REGIAO, MAX_TENTATIVAS_POSICAO, BBOX_MARGEM
 from src.helper.chars import get_supported_kanjis_from_fonts
 from src.helper.degradacoes import aplicar_degradacoes
 
@@ -69,6 +69,26 @@ def escolher_cor_tinta(brilho: float) -> tuple:
             random.randint(215, 255)
         ])
     return (v, v, v)  # escala de cinza — kanjis são monocromáticos
+
+
+def _expandir_bboxes(bboxes: list, margem: float = 0.10) -> list:
+    """
+    Expande cada bounding box em `margem` proporcional ao seu tamanho
+    (ex: 0.10 = +10% em cada direção), clampeando ao limite do crop.
+    Garante que o modelo aprenda a incluir as extremidades dos traços
+    sem cortar as pontas dos kanjis.
+    """
+    resultado = []
+    for x, y, w, h in bboxes:
+        pad_x = w * margem
+        pad_y = h * margem
+        x_new = max(0, x - pad_x)
+        y_new = max(0, y - pad_y)
+        w_new = min(CROP_SIZE - x_new, w + 2 * pad_x)
+        h_new = min(CROP_SIZE - y_new, h + 2 * pad_y)
+        resultado.append((x_new, y_new, w_new, h_new))
+    return resultado
+
 
 def render_kanji(crop: Image.Image):
     fonte_path = random.choice(fonts)
@@ -147,6 +167,7 @@ def render_kanji(crop: Image.Image):
                 cursor_x += char_w + gap_char
             cursor_y += char_h + gap_col
 
+    bboxes = _expandir_bboxes(bboxes, margem=BBOX_MARGEM)
     return crop, bboxes
     
 
@@ -228,7 +249,7 @@ def create_synthetic_manga_images(
         if not bboxes:
             continue  # descarta página sem nenhum caractere detectado
 
-        imagem = aplicar_degradacoes(imagem)
+        imagem, bboxes = aplicar_degradacoes(imagem, bboxes)
         save_page(imagem, bboxes, img_dir, lbl_dir, start_idx + pages_created)
         pages_created += 1
 
