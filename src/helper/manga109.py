@@ -2,7 +2,12 @@ import os
 import random
 import glob
 from PIL import Image, ImageDraw, ImageFont, ImageStat
-from config import MANGA109_IMAGES, PAGES_DIR, CROP_SIZE, PAGES_AMOUNT, FONTS_DIR, LIMITE_DESVIO_REGIAO, MAX_TENTATIVAS_POSICAO, BBOX_MARGEM
+from config import (
+    MANGA109_IMAGES, PAGES_DIR, CROP_SIZE, PAGES_AMOUNT, FONTS_DIR,
+    LIMITE_DESVIO_REGIAO, MAX_TENTATIVAS_POSICAO, BBOX_MARGEM,
+    N_COLUNAS_MIN, N_COLUNAS_MAX, CHARS_POR_COLUNA_MIN, CHARS_POR_COLUNA_MAX,
+    PROB_NEGATIVA, N_BLOCOS_MIN, N_BLOCOS_MAX
+)
 from src.helper.chars import get_supported_kanjis_from_fonts
 from src.helper.degradacoes import aplicar_degradacoes
 
@@ -93,8 +98,8 @@ def _expandir_bboxes(bboxes: list, margem: float = 0.10) -> list:
 def render_kanji(crop: Image.Image):
     fonte_path = random.choice(fonts)
     tam_fonte  = random.randint(24, 48)
-    n_colunas  = random.randint(1, 4)
-    chars_por_coluna = random.randint(4, 12)
+    n_colunas  = random.randint(N_COLUNAS_MIN, N_COLUNAS_MAX)
+    chars_por_coluna = random.randint(CHARS_POR_COLUNA_MIN, CHARS_POR_COLUNA_MAX)
     direcao    = random.choice(["vertical", "horizontal"])
     gap_char   = random.randint(2, 6)
     gap_col    = random.randint(4, 10)
@@ -223,6 +228,7 @@ def create_synthetic_manga_images(
 ) -> int:
     """
     Gera `amount` páginas sintéticas, salvando imagem (.png) e label YOLO (.txt).
+    Dentre estas, uma fração (PROB_NEGATIVA) será composta de imagens negativas (sem texto e sem distorções).
 
     Args:
         img_dir:   diretório destino das imagens
@@ -241,15 +247,27 @@ def create_synthetic_manga_images(
         attempts += 1
         crop = get_croped_image()
 
-        resultado = render_kanji(crop)
-        if resultado is None:
+        # 20% das imagens geradas serão negativas (sem texto/distorções)
+        if random.random() < PROB_NEGATIVA:
+            save_page(crop, [], img_dir, lbl_dir, start_idx + pages_created)
+            pages_created += 1
             continue
 
-        imagem, bboxes = resultado
-        if not bboxes:
-            continue  # descarta página sem nenhum caractere detectado
+        # Fluxo normal: renderiza entre N_BLOCOS_MIN e N_BLOCOS_MAX blocos
+        bboxes_totais = []
+        n_blocos = random.randint(N_BLOCOS_MIN, N_BLOCOS_MAX)
+        for _ in range(n_blocos):
+            resultado = render_kanji(crop)
+            if resultado is None:
+                continue
+            crop, bboxes_bloco = resultado
+            bboxes_totais.extend(bboxes_bloco)
 
-        imagem, bboxes = aplicar_degradacoes(imagem, bboxes)
+        if not bboxes_totais:
+            continue  # nenhum bloco conseguiu posição válida, descartar este crop
+
+        # Aplicar distorções
+        imagem, bboxes = aplicar_degradacoes(crop, bboxes_totais)
         save_page(imagem, bboxes, img_dir, lbl_dir, start_idx + pages_created)
         pages_created += 1
 

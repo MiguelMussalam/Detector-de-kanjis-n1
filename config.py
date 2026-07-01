@@ -81,9 +81,9 @@ FONTES_URL = {
 # ---------------------------------------------------------------------------
 
 # Dataset
-VAL_SPLIT       = _env("KD_VAL_SPLIT",    0.2)   # fração para validação
+VAL_RATIO       = _env("KD_VAL_RATIO",    0.15)  # fração para validação
 CROP_SIZE       = _env("KD_CROP_SIZE",    640)   # tamanho do crop em pixels
-PAGES_AMOUNT    = _env("KD_PAGES_AMOUNT", 12000) # total de páginas sintéticas
+PAGES_AMOUNT    = _env("KD_PAGES_AMOUNT", 20) # total de páginas sintéticas (aumentado de 12000)
 
 # Posicionamento de texto
 GAP_CHAR        = _env("KD_GAP_CHAR",    4)
@@ -102,30 +102,36 @@ LOCAL_WORKERS   = _env("KD_LOCAL_WORKERS",  4)
 PROJECT_NAME    = _env("KD_PROJECT_NAME", "kanji_detector")
 KAGGLE_DATASET  = _env("KD_KAGGLE_DATASET", "kanji-detector-dataset")
 
-# Degradações 2D — ordem de aplicação: geometria → tinta → scanner
+# Imagens negativas
+PROB_NEGATIVA   = _env("KD_PROB_NEGATIVA", 0.20)  # 20% das imagens sem nenhum caractere
 
-# Morfologia (simulação de tinta)
-EROSAO_PROB         = _env("KD_EROSAO_PROB",      0.3)
-DILATACAO_PROB      = _env("KD_DILATACAO_PROB",   0.3)
-MORFO_KERNEL        = _env("KD_MORFO_KERNEL",     2)
-MORFO_ITERACOES     = _env("KD_MORFO_ITERACOES",  1)
+# Quantidade de blocos por imagem
+N_BLOCOS_MIN    = _env("KD_N_BLOCOS_MIN",  3)
+N_BLOCOS_MAX    = _env("KD_N_BLOCOS_MAX",  8)
 
-# Ruído de scanner
-GAUSS_NOISE_PROB    = _env("KD_GAUSS_NOISE_PROB",    0.5)
-GAUSS_NOISE_STD_MIN = _env("KD_GAUSS_NOISE_STD_MIN", 0.05)
-GAUSS_NOISE_STD_MAX = _env("KD_GAUSS_NOISE_STD_MAX", 0.15)
-SALT_PEPPER_PROB    = _env("KD_SALT_PEPPER_PROB",    0.4)
-BLUR_PROB           = _env("KD_BLUR_PROB",           0.35)
-BLUR_KERNEL         = _env("KD_BLUR_KERNEL",         3)
+# Tamanho de cada bloco
+N_COLUNAS_MIN        = _env("KD_N_COLUNAS_MIN",        2)
+N_COLUNAS_MAX        = _env("KD_N_COLUNAS_MAX",        6)
+CHARS_POR_COLUNA_MIN = _env("KD_CHARS_POR_COLUNA_MIN", 6)
+CHARS_POR_COLUNA_MAX = _env("KD_CHARS_POR_COLUNA_MAX", 16)
 
-# SALT_PEPPER_AMOUNT é uma tupla — mantida como constante (não tunável via env var simples)
-SALT_PEPPER_AMOUNT  = (0.002, 0.015)
+# Blur
+BLUR_PROB       = _env("KD_BLUR_PROB",       0.50)
+BLUR_SIGMA_MIN  = _env("KD_BLUR_SIGMA_MIN",  0.1)
+BLUR_SIGMA_MAX  = _env("KD_BLUR_SIGMA_MAX",  2.5)
 
-# Distorções geométricas (curvatura e desalinhamento da página)
-ELASTIC_PROB        = _env("KD_ELASTIC_PROB",       0.4)
-ELASTIC_ALPHA       = _env("KD_ELASTIC_ALPHA",      1)
-ELASTIC_SIGMA       = _env("KD_ELASTIC_SIGMA",      50)
-GRID_PROB           = _env("KD_GRID_PROB",           0.3)
-GRID_DISTORT_LIMIT  = _env("KD_GRID_DISTORT_LIMIT", 0.15)
-ROTATE_PROB         = _env("KD_ROTATE_PROB",         0.6)
-ROTATE_LIMIT        = _env("KD_ROTATE_LIMIT",        3)
+# Morfologia
+MORFO_PROB      = _env("KD_MORFO_PROB",      0.40)
+MORFO_K_MIN     = _env("KD_MORFO_K_MIN",     2)
+MORFO_K_MAX     = _env("KD_MORFO_K_MAX",     4)
+MORFO_ITER_MIN  = _env("KD_MORFO_ITER_MIN",  1)
+MORFO_ITER_MAX  = _env("KD_MORFO_ITER_MAX",  3)
+
+# Ruído
+RUIDO_PROB      = _env("KD_RUIDO_PROB",      0.60)
+RUIDO_STD_MIN   = _env("KD_RUIDO_STD_MIN",   0.01)
+RUIDO_STD_MAX   = _env("KD_RUIDO_STD_MAX",   0.25)
+
+# Rotação
+ROTACAO_PROB    = _env("KD_ROTACAO_PROB",    0.40)
+ROTACAO_MAX     = _env("KD_ROTACAO_MAX",     3.0)  # graus (±)

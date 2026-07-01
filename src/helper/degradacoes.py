@@ -5,96 +5,11 @@ import albumentations as A
 from PIL import Image
 
 from config import (
-    # Morfologia
-    EROSAO_PROB, DILATACAO_PROB, MORFO_KERNEL, MORFO_ITERACOES,
-    # Ruído de scanner
-    GAUSS_NOISE_PROB, GAUSS_NOISE_STD_MIN, GAUSS_NOISE_STD_MAX,
-    SALT_PEPPER_PROB, SALT_PEPPER_AMOUNT,
-    BLUR_PROB, BLUR_KERNEL,
-    # Distorções geométricas
-    ELASTIC_PROB, ELASTIC_ALPHA, ELASTIC_SIGMA,
-    GRID_PROB, GRID_DISTORT_LIMIT,
-    ROTATE_PROB, ROTATE_LIMIT,
+    BLUR_PROB, BLUR_SIGMA_MIN, BLUR_SIGMA_MAX,
+    MORFO_PROB, MORFO_K_MIN, MORFO_K_MAX, MORFO_ITER_MIN, MORFO_ITER_MAX,
+    RUIDO_PROB, RUIDO_STD_MIN, RUIDO_STD_MAX,
+    ROTACAO_PROB, ROTACAO_MAX
 )
-
-
-_pipeline_geometrica = A.Compose([
-    A.ElasticTransform(
-        alpha=ELASTIC_ALPHA,
-        sigma=ELASTIC_SIGMA,
-        interpolation=cv2.INTER_LINEAR,
-        border_mode=cv2.BORDER_REPLICATE,
-        p=ELASTIC_PROB,
-    ),
-    A.GridDistortion(
-        distort_limit=(-GRID_DISTORT_LIMIT, GRID_DISTORT_LIMIT),
-        interpolation=cv2.INTER_LINEAR,
-        border_mode=cv2.BORDER_REPLICATE,
-        p=GRID_PROB,
-    ),
-    A.ShiftScaleRotate(
-        shift_limit=0.0,
-        scale_limit=0.0,
-        rotate_limit=(-ROTATE_LIMIT, ROTATE_LIMIT),
-        interpolation=cv2.INTER_LINEAR,
-        border_mode=cv2.BORDER_REPLICATE,
-        p=ROTATE_PROB,
-    ),
-], bbox_params=A.BboxParams(format='coco', label_fields=['class_labels']))
-
-_pipeline_scanner = A.Compose([
-    A.GaussNoise(
-        std_range=(GAUSS_NOISE_STD_MIN, GAUSS_NOISE_STD_MAX),
-        mean_range=(0.0, 0.0),
-        per_channel=True,
-        p=GAUSS_NOISE_PROB,
-    ),
-    A.SaltAndPepper(
-        amount=SALT_PEPPER_AMOUNT,
-        p=SALT_PEPPER_PROB,
-    ),
-])
-
-
-# ---------------------------------------------------------------------------
-# Helpers internos
-# ---------------------------------------------------------------------------
-
-def _pil_to_np(imagem: Image.Image) -> np.ndarray:
-    """Converte PIL RGB -> numpy uint8 HxWx3."""
-    return np.array(imagem.convert("RGB"), dtype=np.uint8)
-
-
-def _np_to_pil(arr: np.ndarray) -> Image.Image:
-    """Converte numpy uint8 HxWx3 -> PIL RGB."""
-    return Image.fromarray(arr.astype(np.uint8), mode="RGB")
-
-
-def _aplicar_morfologia(arr: np.ndarray) -> np.ndarray:
-    """
-    Aplica erosao XOR dilatacao (nunca ambas no mesmo sample).
-    Erosao    -> tracados mais finos / falta de tinta (papel poroso antigo).
-    Dilatacao -> tracados mais grossos / sangramento de tinta (ink bleed).
-    """
-    kernel = np.ones((MORFO_KERNEL, MORFO_KERNEL), dtype=np.uint8)
-    r = random.random()
-
-    if r < EROSAO_PROB:
-        return cv2.erode(arr, kernel, iterations=MORFO_ITERACOES)
-
-    if r < EROSAO_PROB + DILATACAO_PROB:
-        return cv2.dilate(arr, kernel, iterations=MORFO_ITERACOES)
-
-    return arr  # sem morfologia neste sample
-
-
-def _aplicar_blur(arr: np.ndarray) -> np.ndarray:
-    """Desfoque gaussiano leve simulando perda de foco do scanner."""
-    if random.random() < BLUR_PROB:
-        k = BLUR_KERNEL if BLUR_KERNEL % 2 == 1 else BLUR_KERNEL + 1
-        return cv2.GaussianBlur(arr, (k, k), sigmaX=0)
-    return arr
-
 
 # ---------------------------------------------------------------------------
 # API publica
@@ -104,22 +19,23 @@ def aplicar_degradacoes(imagem: Image.Image, bboxes: list = None) -> tuple:
     """
     Aplica o pipeline completo de degradacao 2D a uma imagem PIL.
     Se bboxes forem fornecidas (no formato COCO: x_min, y_min, width, height),
-    elas também serão transformadas pelo pipeline geométrico.
+    elas também serão transformadas pelo pipeline geométrico (rotação microscópica).
 
-    Ordem cronologica fisica:
-      1. Distorcoes geometricas  (curvatura/desalinhamento da pagina ao escanear)
-      2. Morfologia de tinta     (erosao XOR dilatacao -- defeitos de impressao)
-      3. Ruido de scanner        (GaussNoise + SaltAndPepper + Blur -- sensor optico)
+    Ordem cronológica física das melhorias:
+      1. Rotação microscópica: simula desalinhamento de scan.
+         Utiliza Albumentations ShiftScaleRotate se houver bboxes para rotacioná-las
+         corretamente em conjunto com a imagem. Caso contrário, usa OpenCV diretamente.
+      2. Blur: vai de quase imperceptível a bastante desfocado.
+      3. Morfologia: erosão XOR dilatação com kernel e iterações variáveis.
+      4. Ruído gaussiano: de quase imperceptível a muito ruidoso.
 
     Retorna uma tupla (nova_imagem_pil, bboxes_transformadas).
     """
-    arr = _pil_to_np(imagem)
+    arr = np.array(imagem.convert("RGB"), dtype=np.uint8)
     h_img, w_img = arr.shape[:2]
 
-    # 1 — Geometria
+    # 1 — Rotação microscópica (geometria)
     if bboxes is not None and len(bboxes) > 0:
-        # Validar e ajustar coordenadas das bboxes para os limites da imagem
-        # para evitar erros de validação do Albumentations.
         valid_bboxes = []
         for x, y, w, h in bboxes:
             x_min = max(0.0, min(float(w_img - 1), float(x)))
@@ -135,21 +51,55 @@ def aplicar_degradacoes(imagem: Image.Image, bboxes: list = None) -> tuple:
 
         if len(valid_bboxes) > 0:
             class_labels = [0] * len(valid_bboxes)
-            transformed = _pipeline_geometrica(image=arr, bboxes=valid_bboxes, class_labels=class_labels)
+            transform = A.Compose([
+                A.ShiftScaleRotate(
+                    shift_limit=0.0,
+                    scale_limit=0.0,
+                    rotate_limit=(-ROTACAO_MAX, ROTACAO_MAX),
+                    interpolation=cv2.INTER_LINEAR,
+                    border_mode=cv2.BORDER_REPLICATE,
+                    p=ROTACAO_PROB
+                )
+            ], bbox_params=A.BboxParams(format='coco', label_fields=['class_labels']))
+            
+            transformed = transform(image=arr, bboxes=valid_bboxes, class_labels=class_labels)
             arr = transformed["image"]
             bboxes = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in transformed["bboxes"]]
         else:
-            arr = _pipeline_geometrica(image=arr)["image"]
+            # Sem bboxes válidas, aplica rotação apenas na imagem
+            if random.random() < ROTACAO_PROB:
+                angulo = random.uniform(-ROTACAO_MAX, ROTACAO_MAX)
+                M = cv2.getRotationMatrix2D((w_img // 2, h_img // 2), angulo, 1.0)
+                arr = cv2.warpAffine(arr, M, (w_img, h_img), borderMode=cv2.BORDER_REPLICATE)
             bboxes = []
     else:
-        arr = _pipeline_geometrica(image=arr)["image"]
-        bboxes = None
+        # Se bboxes for None ou vazia, aplica rotação diretamente na imagem
+        if random.random() < ROTACAO_PROB:
+            angulo = random.uniform(-ROTACAO_MAX, ROTACAO_MAX)
+            M = cv2.getRotationMatrix2D((w_img // 2, h_img // 2), angulo, 1.0)
+            arr = cv2.warpAffine(arr, M, (w_img, h_img), borderMode=cv2.BORDER_REPLICATE)
 
-    # 2 — Morfologia (tinta)
-    arr = _aplicar_morfologia(arr)
+    # 2 — Blur: vai de quase imperceptível a bastante desfocado
+    if random.random() < BLUR_PROB:
+        sigma = random.uniform(BLUR_SIGMA_MIN, BLUR_SIGMA_MAX)
+        arr = cv2.GaussianBlur(arr, (0, 0), sigma)
 
-    # 3 — Scanner: ruido estocastico, depois blur (ordem importa)
-    arr = _pipeline_scanner(image=arr)["image"]
-    arr = _aplicar_blur(arr)
+    # 3 — Morfologia: erosão XOR dilatação, kernel e iterações variáveis
+    if random.random() < MORFO_PROB:
+        k_size = random.randint(MORFO_K_MIN, MORFO_K_MAX)
+        iteracoes = random.randint(MORFO_ITER_MIN, MORFO_ITER_MAX)
+        kernel = np.ones((k_size, k_size), np.uint8)
+        if random.random() < 0.5:
+            arr = cv2.erode(arr, kernel, iterations=iteracoes)
+        else:
+            arr = cv2.dilate(arr, kernel, iterations=iteracoes)
 
-    return _np_to_pil(arr), bboxes
+    # 4 — Ruído gaussiano: de quase imperceptível a muito ruidoso
+    if random.random() < RUIDO_PROB:
+        std = random.uniform(RUIDO_STD_MIN, RUIDO_STD_MAX)
+        ruido = np.random.normal(0, std * 255, arr.shape).astype(np.float32)
+        arr = np.clip(arr.astype(np.float32) + ruido, 0, 255).astype(np.uint8)
+
+    # Converter de volta para imagem PIL
+    nova_imagem = Image.fromarray(arr, mode="RGB")
+    return nova_imagem, bboxes

@@ -15,7 +15,7 @@ from config import (
     DATASET_DIR,
     TRAIN_IMG_DIR, VAL_IMG_DIR,
     TRAIN_LBL_DIR, VAL_LBL_DIR,
-    PAGES_AMOUNT, VAL_SPLIT,
+    PAGES_AMOUNT, VAL_RATIO,
     FONTES_URL, FONTS_DIR
 )
 
@@ -54,7 +54,7 @@ def gerar_dataset_yaml():
 
 
 def gerar_dataset():
-    n_val   = max(1, math.floor(PAGES_AMOUNT * VAL_SPLIT))
+    n_val   = max(1, math.floor(PAGES_AMOUNT * VAL_RATIO))
     n_train = PAGES_AMOUNT - n_val
     print(f"Gerando dataset: {n_train} treino + {n_val} val = {PAGES_AMOUNT} paginas")
     print("-" * 60)
