@@ -4,7 +4,7 @@ generate_pages.py
 Script local: gera o dataset sintetico completo.
 
 Uso:
-    python -m src.kanji_detector.generate_pages
+    python -m src.detector.generate_pages
 """
 
 import os
@@ -38,18 +38,18 @@ def criar_estrutura():
 
 
 def gerar_dataset_yaml():
-    """Gera o dataset.yaml com caminhos locais. No Kaggle, train.py sobrescreve."""
-    yaml_path = os.path.join(DATASET_DIR, "dataset.yaml")
+    """Gera o data.yaml com caminhos locais. No Kaggle, train.py sobrescreve."""
+    yaml_path = os.path.join(DATASET_DIR, "data.yaml")
     config = {
         "path": DATASET_DIR,
-        "train": os.path.join("images", "train"),
-        "val":   os.path.join("images", "val"),
+        "train": "images/train",
+        "val":   "images/val",
         "nc":    1,
-        "names": {0: "kanji"},
+        "names": ["text"],
     }
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
-    print(f"dataset.yaml gerado em: {yaml_path}")
+    print(f"data.yaml gerado em: {yaml_path}")
     return yaml_path
 
 

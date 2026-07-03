@@ -146,7 +146,6 @@ def render_kanji(crop: Image.Image):
     char_h = bbox[3] - bbox[1]
 
     draw   = ImageDraw.Draw(crop)
-    bboxes = []
 
     if direcao == "vertical":
         cursor_x = inicio_x
@@ -154,9 +153,6 @@ def render_kanji(crop: Image.Image):
             cursor_y = inicio_y
             for char in coluna:
                 draw.text((cursor_x, cursor_y), char, font=font, fill=cor_tinta, stroke_width=2, stroke_fill=stroke_fill)
-                # Obtém a caixa delimitadora exata em pixels da renderização do caractere
-                x0, y0, x1, y1 = draw.textbbox((cursor_x, cursor_y), char, font=font)
-                bboxes.append((x0, y0, x1 - x0, y1 - y0))
                 cursor_y += char_h + gap_char
             cursor_x += char_w + gap_col
 
@@ -166,14 +162,12 @@ def render_kanji(crop: Image.Image):
             cursor_x = inicio_x
             for char in linha:
                 draw.text((cursor_x, cursor_y), char, font=font, fill=cor_tinta, stroke_width=2, stroke_fill=stroke_fill)
-                # Obtém a caixa delimitadora exata em pixels da renderização do caractere
-                x0, y0, x1, y1 = draw.textbbox((cursor_x, cursor_y), char, font=font)
-                bboxes.append((x0, y0, x1 - x0, y1 - y0))
                 cursor_x += char_w + gap_char
             cursor_y += char_h + gap_col
 
-    bboxes = _expandir_bboxes(bboxes, margem=BBOX_MARGEM)
-    return crop, bboxes
+    bbox_bloco = (inicio_x, inicio_y, bloco_w, bloco_h)
+    bbox_bloco = _expandir_bboxes([bbox_bloco], margem=BBOX_MARGEM)[0]
+    return crop, bbox_bloco
     
 
 
@@ -260,8 +254,8 @@ def create_synthetic_manga_images(
             resultado = render_kanji(crop)
             if resultado is None:
                 continue
-            crop, bboxes_bloco = resultado
-            bboxes_totais.extend(bboxes_bloco)
+            crop, bbox_bloco = resultado
+            bboxes_totais.append(bbox_bloco)
 
         if not bboxes_totais:
             continue  # nenhum bloco conseguiu posição válida, descartar este crop

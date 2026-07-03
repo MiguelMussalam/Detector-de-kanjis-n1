@@ -9,10 +9,10 @@ Roda localmente e no Kaggle automaticamente:
   - Ajusta paths do dataset.yaml e numero de workers
 
 Uso (local):
-    python -m src.kanji_detector.train
+    python -m src.detector.train
 
 Uso (Kaggle notebook):
-    !python /kaggle/working/src/kanji_detector/train.py
+    !python /kaggle/working/src/detector/train.py
 """
 
 import os
@@ -40,6 +40,7 @@ from config import (
     DATASET_DIR, EPOCHS, IMGSZ, BATCH,
     KAGGLE_WORKERS, LOCAL_WORKERS, PROJECT_NAME,
     KAGGLE_DATASET, YOLO_MODEL, ROOT_DIR,
+    MODO_TREINO, MANGA109_YOLO_DIR, SYNTHETIC_YOLO_DIR, DATA_DIR,
 )
 
 
@@ -65,10 +66,10 @@ def resolver_paths_kaggle(kaggle_dataset_name: str) -> str:
     yaml_path = "/kaggle/working/dataset.yaml"
     config = {
         "path": kaggle_dataset_dir,
-        "train": os.path.join("images", "train"),
-        "val":   os.path.join("images", "val"),
+        "train": "images/train",
+        "val":   "images/val",
         "nc":    1,
-        "names": {0: "kanji"},
+        "names": ["text"],
     }
     with open(yaml_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
@@ -78,15 +79,37 @@ def resolver_paths_kaggle(kaggle_dataset_name: str) -> str:
     return yaml_path
 
 
-def resolver_paths_local() -> str:
-    """Retorna o caminho do dataset.yaml gerado pelo generate_pages.py."""
-    yaml_path = os.path.join(DATASET_DIR, "dataset.yaml")
-    if not os.path.exists(yaml_path):
-        raise FileNotFoundError(
-            f"dataset.yaml nao encontrado em: {yaml_path}\n"
-            "Execute primeiro: python -m src.kanji_detector.generate_pages"
-        )
-    return yaml_path
+def resolver_dataset(modo: str) -> str:
+    if modo == "manga109":
+        yaml_path = os.path.join(MANGA109_YOLO_DIR, "data.yaml")
+        if not os.path.exists(yaml_path):
+            raise FileNotFoundError(
+                "Dataset Manga109 não encontrado. "
+                "Execute python -m src.detector.prepare_manga109 primeiro."
+            )
+        return yaml_path
+
+    elif modo == "dado_sintetico":
+        yaml_path = os.path.join(SYNTHETIC_YOLO_DIR, "data.yaml")
+        if not os.path.exists(yaml_path):
+            raise FileNotFoundError(
+                "Dataset sintético não encontrado. "
+                "Execute python -m src.detector.generate_pages primeiro."
+            )
+        return yaml_path
+
+    elif modo == "misto":
+        yaml_path = os.path.join(DATA_DIR, "misto_yolo", "data.yaml")
+        if not os.path.exists(yaml_path):
+            raise FileNotFoundError(
+                "Dataset misto não encontrado. "
+                "Execute python -m src.detector.prepare_misto primeiro."
+            )
+        return yaml_path
+
+    else:
+        raise ValueError(f"MODO_TREINO inválido: '{modo}'. "
+                         "Use 'manga109', 'dado_sintetico' ou 'misto'.")
 
 
 # ---------------------------------------------------------------------------
@@ -104,36 +127,36 @@ def treinar():
         if not os.path.exists(model_path):
             model_path = YOLO_MODEL  # ultralytics faz o download automatico
 
-        # Se o dataset foi gerado localmente na sessao do Kaggle (Opcao 1)
-        dataset_local_yaml = os.path.join(DATASET_DIR, "dataset.yaml")
-        # Se o dataset foi adicionado como Input pronto no Kaggle (Opcao 2)
-        kaggle_input_dir = f"/kaggle/input/{KAGGLE_DATASET}"
-
-        if os.path.exists(kaggle_input_dir):
-            print(f"[INFO] Utilizando dataset de entrada do Kaggle: {kaggle_input_dir}")
-            data_yaml = resolver_paths_kaggle(KAGGLE_DATASET)
-        elif os.path.exists(dataset_local_yaml):
-            print(f"[INFO] Utilizando dataset gerado na sessao (/kaggle/working): {dataset_local_yaml}")
-            data_yaml = dataset_local_yaml
-        else:
-            raise FileNotFoundError(
-                f"Nao foi encontrado nenhum dataset de treino no Kaggle!\n"
-                f"1. Se gerou no Kaggle, certifique-se de ter rodado o generate_pages.py primeiro.\n"
-                f"2. Se enviou o dataset pronto, verifique se o adicionou como Input com o nome '{KAGGLE_DATASET}'."
-            )
+        # Tenta resolver o dataset com base no MODO_TREINO local no Kaggle
+        try:
+            data_yaml = resolver_dataset(MODO_TREINO)
+            print(f"[INFO] Utilizando dataset gerado na sessao para '{MODO_TREINO}': {data_yaml}")
+        except FileNotFoundError:
+            # Se não encontrar local, tenta usar o dataset do input do Kaggle
+            kaggle_input_dir = f"/kaggle/input/{KAGGLE_DATASET}"
+            if os.path.exists(kaggle_input_dir):
+                print(f"[INFO] Utilizando dataset de entrada do Kaggle: {kaggle_input_dir}")
+                data_yaml = resolver_paths_kaggle(KAGGLE_DATASET)
+            else:
+                raise FileNotFoundError(
+                    f"Nao foi encontrado nenhum dataset de treino para o modo '{MODO_TREINO}' no Kaggle!\n"
+                    f"1. Se gerou no Kaggle, certifique-se de ter rodado o script de geracao correspondente primeiro.\n"
+                    f"2. Se enviou o dataset pronto, verifique se o adicionou como Input com o nome '{KAGGLE_DATASET}'."
+                )
     else:
-        data_yaml = resolver_paths_local()
+        data_yaml = resolver_dataset(MODO_TREINO)
         workers   = LOCAL_WORKERS
         model_path = os.path.join(ROOT_DIR, YOLO_MODEL)
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Modelo nao encontrado: {model_path}")
 
-    print(f"[INFO] Modelo:   {model_path}")
-    print(f"[INFO] Data:     {data_yaml}")
-    print(f"[INFO] Epochs:   {EPOCHS}")
-    print(f"[INFO] Batch:    {BATCH}")
-    print(f"[INFO] Workers:  {workers}")
-    print(f"[INFO] Img size: {IMGSZ}")
+    print(f"[INFO] Modo Treino: {MODO_TREINO}")
+    print(f"[INFO] Modelo:      {model_path}")
+    print(f"[INFO] Data:        {data_yaml}")
+    print(f"[INFO] Epochs:      {EPOCHS}")
+    print(f"[INFO] Batch:       {BATCH}")
+    print(f"[INFO] Workers:     {workers}")
+    print(f"[INFO] Img size:    {IMGSZ}")
 
     model = YOLO(model_path)
 
@@ -144,7 +167,7 @@ def treinar():
         batch    = BATCH,
         workers  = workers,
         project  = PROJECT_NAME,
-        name     = "run1",
+        name     = f"run_{MODO_TREINO}",
         exist_ok = True,   # permite retomar runs com mesmo nome
         # Kaggle: salva checkpoints no working dir
         save     = True,

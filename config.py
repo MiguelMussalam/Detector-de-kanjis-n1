@@ -51,16 +51,50 @@ def _buscar_manga109_images():
 
 MANGA109_IMAGES = _buscar_manga109_images()
 
-# Dataset sintético
+# -----------------------------------------------------------------------
+# Modo de treino do detector
+# -----------------------------------------------------------------------
+# Valores possíveis: "manga109" | "dado_sintetico" | "misto"
+MODO_TREINO = "manga109"
+
+# -----------------------------------------------------------------------
+# Caminhos do Manga109 anotado
+# -----------------------------------------------------------------------
+MANGA109_ANNOTATIONS = os.path.join(MANGA109_DIR, "annotations")
+MANGA109_YOLO_DIR    = os.path.join(DATA_DIR, "manga109_yolo")
+
+# Split do Manga109 (baseado em Ogawa et al., 2018)
+# 99 volumes para treino, 10 volumes para validação
+MANGA109_VAL_VOLUMES = [
+    "YamatoNoHane", "RisingGirl", "Hamlet", "TaiyouNiSmash",
+    "UchuKigekiM774", "WarewareHaOniDearu", "YumeNoKayoiji",
+    "KarakuriDouji", "EverydayOsakanaChan", "HealingPlanet"
+]
+# Os 99 volumes restantes são automaticamente treino
+
+# -----------------------------------------------------------------------
+# Caminhos do dataset sintético (gerado por generate_pages.py)
+# -----------------------------------------------------------------------
+SYNTHETIC_YOLO_DIR = os.path.join(DATA_DIR, "synthetic_yolo")
+
+# -----------------------------------------------------------------------
+# Parâmetros do modo misto
+# -----------------------------------------------------------------------
+# Proporção de imagens sintéticas em relação ao total do Manga109 de treino
+# Ex: 0.25 significa 25% da quantidade do Manga109 de treino
+MISTO_RATIO_SINTETICO = 0.25
+
+# Dataset sintético (mantido para compatibilidade com generate_pages.py)
 SYNTHETIC_DIR   = os.path.join(DATA_DIR, "synthetic")
 PAGES_DIR       = os.path.join(SYNTHETIC_DIR, "pages")
 
 # Dataset YOLO (estrutura images/labels train/val)
-DATASET_DIR     = os.path.join(DATA_DIR, "dataset")
+DATASET_DIR     = SYNTHETIC_YOLO_DIR
 TRAIN_IMG_DIR   = os.path.join(DATASET_DIR, "images", "train")
 VAL_IMG_DIR     = os.path.join(DATASET_DIR, "images", "val")
 TRAIN_LBL_DIR   = os.path.join(DATASET_DIR, "labels", "train")
 VAL_LBL_DIR     = os.path.join(DATASET_DIR, "labels", "val")
+
 
 # URLs externas (não tunáveis)
 KANJI_DATA_URL  = "https://raw.githubusercontent.com/davidluzgouveia/kanji-data/master/kanji.json"
