@@ -31,25 +31,31 @@ DATA_DIR        = os.path.join(ROOT_DIR, "data")
 FONTS_DIR       = os.path.join(ASSETS_DIR, "fonts")
 
 # Manga109
-MANGA109_DIR    = os.path.join(DATA_DIR, "raw", "Manga109")
-
-def _buscar_manga109_images():
-    # Caminho padrão local
-    caminho_local = os.path.join(MANGA109_DIR, "images")
-    if os.path.exists(caminho_local):
+def _buscar_manga109_diretorio():
+    """
+    Retorna o diretório base do Manga109.
+    No local, será 'data/raw/Manga109'.
+    No Kaggle, busca dinamicamente uma pasta contendo 'images' e 'annotations'
+    ou cujo nome contenha 'manga109'.
+    """
+    caminho_local = os.path.join(DATA_DIR, "raw", "Manga109")
+    if os.path.exists(os.path.join(caminho_local, "images")) and os.path.exists(os.path.join(caminho_local, "annotations")):
         return caminho_local
 
     # Busca dinâmica no ambiente Kaggle
     kaggle_input = "/kaggle/input"
     if os.path.exists(kaggle_input):
         for root, dirs, _ in os.walk(kaggle_input):
-            if "images" in dirs and "manga109" in root.lower():
-                found_path = os.path.join(root, "images")
-                print(f"[INFO] Manga109 images encontradas no Kaggle: {found_path}")
-                return found_path
+            if "images" in dirs and "annotations" in dirs:
+                print(f"[INFO] Manga109 dir encontrado no Kaggle: {root}")
+                return root
+            if "manga109" in root.lower() and ("images" in dirs or "annotations" in dirs):
+                print(f"[INFO] Manga109 dir parcial encontrado no Kaggle: {root}")
+                return root
     return caminho_local
 
-MANGA109_IMAGES = _buscar_manga109_images()
+MANGA109_DIR = _buscar_manga109_diretorio()
+MANGA109_IMAGES = os.path.join(MANGA109_DIR, "images")
 
 # -----------------------------------------------------------------------
 # Modo de treino do detector
