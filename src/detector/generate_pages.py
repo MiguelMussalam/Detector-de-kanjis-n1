@@ -12,10 +12,10 @@ import math
 import yaml
 
 from config import (
-    DATASET_DIR,
+    DATASET_DIR, DATA_DIR,
     TRAIN_IMG_DIR, VAL_IMG_DIR,
     TRAIN_LBL_DIR, VAL_LBL_DIR,
-    PAGES_AMOUNT, VAL_RATIO,
+    PAGES_AMOUNT,
     FONTES_URL, FONTS_DIR
 )
 
@@ -30,10 +30,14 @@ from src.helper.manga109 import create_synthetic_manga_images
 import shutil
 
 def criar_estrutura():
-    for d in [TRAIN_IMG_DIR, VAL_IMG_DIR, TRAIN_LBL_DIR, VAL_LBL_DIR]:
+    # Limpa apenas treino, pois val virá do manga109
+    for d in [TRAIN_IMG_DIR, TRAIN_LBL_DIR]:
         if os.path.exists(d):
             shutil.rmtree(d)
         os.makedirs(d, exist_ok=True)
+    # Garante que val_dir exista vazio caso necessite de fallback, mas normalmente val virá do manga109
+    os.makedirs(VAL_IMG_DIR, exist_ok=True)
+    os.makedirs(VAL_LBL_DIR, exist_ok=True)
     print("Estrutura de pastas limpa e criada.")
 
 
@@ -41,9 +45,9 @@ def gerar_dataset_yaml():
     """Gera o data.yaml com caminhos locais. No Kaggle, train.py sobrescreve."""
     yaml_path = os.path.join(DATASET_DIR, "data.yaml")
     config = {
-        "path": DATASET_DIR,
-        "train": "images/train",
-        "val":   "images/val",
+        "path": DATA_DIR,
+        "train": "synthetic_yolo/images/train",
+        "val":   "manga109_yolo/images/val",
         "nc":    1,
         "names": ["text"],
     }
@@ -54,28 +58,19 @@ def gerar_dataset_yaml():
 
 
 def gerar_dataset():
-    n_val   = max(1, math.floor(PAGES_AMOUNT * VAL_RATIO))
-    n_train = PAGES_AMOUNT - n_val
-    print(f"Gerando dataset: {n_train} treino + {n_val} val = {PAGES_AMOUNT} paginas")
+    print(f"Gerando dataset: {PAGES_AMOUNT} paginas de treino")
     print("-" * 60)
 
-    print(f"[train] Gerando {n_train} paginas...")
+    print(f"[train] Gerando {PAGES_AMOUNT} paginas...")
     geradas_train = create_synthetic_manga_images(
         img_dir=TRAIN_IMG_DIR, lbl_dir=TRAIN_LBL_DIR,
-        amount=n_train, start_idx=0,
+        amount=PAGES_AMOUNT, start_idx=0,
     )
-    print(f"[train] {geradas_train}/{n_train} paginas geradas")
-
-    print(f"[val]   Gerando {n_val} paginas...")
-    geradas_val = create_synthetic_manga_images(
-        img_dir=VAL_IMG_DIR, lbl_dir=VAL_LBL_DIR,
-        amount=n_val, start_idx=n_train,
-    )
-    print(f"[val]   {geradas_val}/{n_val} paginas geradas")
+    print(f"[train] {geradas_train}/{PAGES_AMOUNT} paginas geradas")
 
     print("-" * 60)
-    print(f"Total gerado: {geradas_train + geradas_val} paginas")
-    return geradas_train, geradas_val
+    print(f"Total gerado: {geradas_train} paginas")
+    return geradas_train, 0
 
 
 def gerar_amostras_com_boxes(num_amostras=5):
