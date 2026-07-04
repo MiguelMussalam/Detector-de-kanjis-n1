@@ -121,7 +121,6 @@ FONTES_URL = {
 # ---------------------------------------------------------------------------
 
 # Dataset
-VAL_RATIO       = _env("KD_VAL_RATIO",    0.15)  # fração para validação
 CROP_SIZE       = _env("KD_CROP_SIZE",    640)   # tamanho do crop em pixels
 PAGES_AMOUNT    = _env("KD_PAGES_AMOUNT", 20) # total de páginas sintéticas (aumentado de 12000)
 

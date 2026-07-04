@@ -8,13 +8,12 @@ Uso:
 """
 
 import os
-import math
 import yaml
 
 from config import (
-    DATASET_DIR, DATA_DIR,
-    TRAIN_IMG_DIR, VAL_IMG_DIR,
-    TRAIN_LBL_DIR, VAL_LBL_DIR,
+    DATASET_DIR,
+    MANGA109_YOLO_DIR,
+    TRAIN_IMG_DIR, TRAIN_LBL_DIR,
     PAGES_AMOUNT,
     FONTES_URL, FONTS_DIR
 )
@@ -30,30 +29,30 @@ from src.helper.manga109 import create_synthetic_manga_images
 import shutil
 
 def criar_estrutura():
-    # Limpa apenas treino, pois val virá do manga109
+    # Apenas treino — val é sempre os 10 volumes reais do Manga109
     for d in [TRAIN_IMG_DIR, TRAIN_LBL_DIR]:
         if os.path.exists(d):
             shutil.rmtree(d)
         os.makedirs(d, exist_ok=True)
-    # Garante que val_dir exista vazio caso necessite de fallback, mas normalmente val virá do manga109
-    os.makedirs(VAL_IMG_DIR, exist_ok=True)
-    os.makedirs(VAL_LBL_DIR, exist_ok=True)
     print("Estrutura de pastas limpa e criada.")
 
 
 def gerar_dataset_yaml():
-    """Gera o data.yaml com caminhos locais. No Kaggle, train.py sobrescreve."""
+    """Gera o data.yaml. val aponta para os 10 volumes reais do Manga109."""
+    val_real = os.path.abspath(os.path.join(MANGA109_YOLO_DIR, "images", "val"))
     yaml_path = os.path.join(DATASET_DIR, "data.yaml")
     config = {
-        "path": DATA_DIR,
-        "train": "synthetic_yolo/images/train",
-        "val":   "manga109_yolo/images/val",
+        "path": os.path.abspath(DATASET_DIR),
+        "train": "images/train",
+        "val":   val_real,
         "nc":    1,
         "names": ["text"],
     }
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
     print(f"data.yaml gerado em: {yaml_path}")
+    print(f"  train: {os.path.abspath(DATASET_DIR)}/images/train")
+    print(f"  val:   {val_real}")
     return yaml_path
 
 
