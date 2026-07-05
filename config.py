@@ -61,7 +61,7 @@ MANGA109_IMAGES = os.path.join(MANGA109_DIR, "images")
 # Modo de treino do detector
 # -----------------------------------------------------------------------
 # Valores possíveis: "manga109" | "dado_sintetico" | "misto"
-MODO_TREINO = "manga109"
+MODO_TREINO = _env("KD_MODO_TREINO", "manga109")
 
 # -----------------------------------------------------------------------
 # Caminhos do Manga109 anotado
@@ -125,10 +125,11 @@ CROP_SIZE       = _env("KD_CROP_SIZE",    640)   # tamanho do crop em pixels
 PAGES_AMOUNT    = _env("KD_PAGES_AMOUNT", 20) # total de páginas sintéticas (aumentado de 12000)
 
 # Posicionamento de texto
+GAP_BLOCO = _env("KD_GAP_BLOCO", 12)
 GAP_CHAR        = _env("KD_GAP_CHAR",    4)
 GAP_COL         = _env("KD_GAP_COL",     8)
 LIMITE_DESVIO_REGIAO   = _env("KD_LIMITE_DESVIO",    25)
-MAX_TENTATIVAS_POSICAO = _env("KD_MAX_TENTATIVAS",    10)
+MAX_TENTATIVAS_POSICAO = _env("KD_MAX_TENTATIVAS",    30)
 BBOX_MARGEM            = _env("KD_BBOX_MARGEM",      0.10)  # expansao proporcional das bboxes (ex: 0.10 = +10%)
 
 # Treino YOLO

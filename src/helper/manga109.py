@@ -4,7 +4,7 @@ import glob
 from PIL import Image, ImageDraw, ImageFont, ImageStat
 from config import (
     MANGA109_IMAGES, PAGES_DIR, CROP_SIZE, PAGES_AMOUNT, FONTS_DIR,
-    LIMITE_DESVIO_REGIAO, MAX_TENTATIVAS_POSICAO, BBOX_MARGEM,
+    LIMITE_DESVIO_REGIAO, MAX_TENTATIVAS_POSICAO, BBOX_MARGEM, GAP_BLOCO,
     N_COLUNAS_MIN, N_COLUNAS_MAX, CHARS_POR_COLUNA_MIN, CHARS_POR_COLUNA_MAX,
     PROB_NEGATIVA, N_BLOCOS_MIN, N_BLOCOS_MAX
 )
@@ -87,15 +87,30 @@ def _expandir_bboxes(bboxes: list, margem: float = 0.10) -> list:
     for x, y, w, h in bboxes:
         pad_x = w * margem
         pad_y = h * margem
-        x_new = max(0, x - pad_x)
-        y_new = max(0, y - pad_y)
-        w_new = min(CROP_SIZE - x_new, w + 2 * pad_x)
-        h_new = min(CROP_SIZE - y_new, h + 2 * pad_y)
-        resultado.append((x_new, y_new, w_new, h_new))
+        x0 = max(0.0, x - pad_x)
+        y0 = max(0.0, y - pad_y)
+        x1 = min(float(CROP_SIZE), x + w + pad_x)
+        y1 = min(float(CROP_SIZE), y + h + pad_y)
+        resultado.append((x0, y0, x1 - x0, y1 - y0))
     return resultado
 
+def _sobrepoe(candidato: tuple, bboxes: list, gap: float = 0) -> bool:
+    """
+    Retorna True se o retangulo `candidato` (x, y, w, h) se sobrepoe (ou fica
+    a menos de `gap` px de) algum retangulo em `bboxes`. Verificacao via
+    separacao de eixos (AABB), expandindo o candidato por `gap` em cada lado.
+    """
+    cx, cy, cw, ch = candidato
+    cx0, cy0 = cx - gap, cy - gap
+    cx1, cy1 = cx + cw + gap, cy + ch + gap
+    for (x, y, w, h) in bboxes:
+        x1, y1 = x + w, y + h
+        sem_overlap = cx1 <= x or x1 <= cx0 or cy1 <= y or y1 <= cy0
+        if not sem_overlap:
+            return True
+    return False
 
-def render_kanji(crop: Image.Image):
+def render_kanji(crop: Image.Image, bboxes_existentes: list = None):
     fonte_path = random.choice(fonts)
     tam_fonte  = random.randint(24, 48)
     n_colunas  = random.randint(N_COLUNAS_MIN, N_COLUNAS_MAX)
@@ -114,10 +129,15 @@ def render_kanji(crop: Image.Image):
     if max_x <= 0 or max_y <= 0:
         return None
 
+    bboxes_existentes = bboxes_existentes or []
     posicao_encontrada = False
     for _ in range(MAX_TENTATIVAS_POSICAO):
         candidato_x = random.randint(0, max_x)
         candidato_y = random.randint(0, max_y)
+
+        candidato_expandido = _expandir_bboxes([(candidato_x, candidato_y, bloco_w, bloco_h)], margem=BBOX_MARGEM)[0]
+        if _sobrepoe(candidato_expandido, bboxes_existentes, gap=GAP_BLOCO):
+            continue
 
         stats = analisar_regiao(crop, candidato_x, candidato_y, bloco_w, bloco_h)
 
@@ -251,7 +271,7 @@ def create_synthetic_manga_images(
         bboxes_totais = []
         n_blocos = random.randint(N_BLOCOS_MIN, N_BLOCOS_MAX)
         for _ in range(n_blocos):
-            resultado = render_kanji(crop)
+            resultado = render_kanji(crop, bboxes_totais)
             if resultado is None:
                 continue
             crop, bbox_bloco = resultado
@@ -260,8 +280,20 @@ def create_synthetic_manga_images(
         if not bboxes_totais:
             continue  # nenhum bloco conseguiu posição válida, descartar este crop
 
-        # Aplicar distorções
+        # Aplicar distorções (inclui rotação microscópica que pode deslocar bboxes)
         imagem, bboxes = aplicar_degradacoes(crop, bboxes_totais)
+
+        # Filtro pós-rotação: remove bboxes que sobreponham outros após a degradação.
+        # Greedy: aceita cada bbox em ordem, descarta se conflitar com algum já aceito.
+        bboxes_sem_overlap = []
+        for bbox in bboxes:
+            if not _sobrepoe(bbox, bboxes_sem_overlap, gap=0):
+                bboxes_sem_overlap.append(bbox)
+        bboxes = bboxes_sem_overlap
+
+        if not bboxes:
+            continue  # rotação eliminou todos os blocos por sobreposição, descartar
+
         save_page(imagem, bboxes, img_dir, lbl_dir, start_idx + pages_created)
         pages_created += 1
 
