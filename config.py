@@ -87,3 +87,69 @@ BATCH           = _env("KD_BATCH",       16)
 KAGGLE_WORKERS  = _env("KD_KAGGLE_WORKERS", 2)   # T4/P100 têm 2 vCPUs
 LOCAL_WORKERS   = _env("KD_LOCAL_WORKERS",  4)
 PROJECT_NAME    = _env("KD_PROJECT_NAME", "kanji_detector")
+
+# ---------------------------------------------------------------------------
+# Classificador — geração de crops sintéticos
+# ---------------------------------------------------------------------------
+
+# Diretórios do dataset gerado
+CLASSIFIER_DATA_DIR   = os.path.join(DATA_DIR, "classifier")
+CLASSIFIER_TRAIN_DIR  = os.path.join(CLASSIFIER_DATA_DIR, "train")
+CLASSIFIER_VAL_DIR    = os.path.join(CLASSIFIER_DATA_DIR, "val")
+CLASSIFIER_SANITY_DIR = os.path.join(CLASSIFIER_DATA_DIR, "sanity")
+
+# Escopo do classificador
+CLASSIFIER_KANJI_LEVEL   = _env("KD_CLF_LEVEL", "n1")
+CLASSIFIER_INPUT_SIZE    = _env("KD_CLF_INPUT_SIZE", 64)
+
+# Número de crops por classe (split 80/20)
+CLASSIFIER_SAMPLES_TRAIN = _env("KD_CLF_SAMPLES_TRAIN", 40)
+CLASSIFIER_SAMPLES_VAL   = _env("KD_CLF_SAMPLES_VAL", 10)
+
+# Sanity check visual
+CLASSIFIER_SANITY_COUNT  = _env("KD_CLF_SANITY_COUNT", 20)
+
+# Reprodutibilidade
+CLASSIFIER_SEED_TRAIN    = _env("KD_CLF_SEED_TRAIN", 42)
+CLASSIFIER_SEED_VAL      = _env("KD_CLF_SEED_VAL", 1337)
+
+# Tamanhos de fonte simulados (multi-scale)
+# Distribuição enviesada pra menores — em manga real kanji pequeno é mais comum
+CLASSIFIER_FONT_SIZES    = [16, 20, 28, 40, 60, 96]
+
+# Margem em volta do glyph antes do downsample para 64x64
+CLASSIFIER_CANVAS_MARGIN = _env("KD_CLF_CANVAS_MARGIN", 0.15)
+
+# Fundo do crop (papel — não branco puro)
+CLF_BG_VALUE_MIN     = _env("KD_CLF_BG_MIN",     245)
+CLF_BG_VALUE_MAX     = _env("KD_CLF_BG_MAX",     255)
+CLF_BG_NOISE_STD     = _env("KD_CLF_BG_NOISE_STD", 2.0)
+
+# Degradações
+CLF_TRANSLATE_PROB   = _env("KD_CLF_TRANSLATE_PROB",   0.7)
+CLF_TRANSLATE_MAX    = _env("KD_CLF_TRANSLATE_MAX",    0.10)
+
+CLF_BLUR_PROB        = _env("KD_CLF_BLUR_PROB",        0.5)
+CLF_BLUR_SIGMA_MIN   = _env("KD_CLF_BLUR_SIGMA_MIN",   0.3)
+CLF_BLUR_SIGMA_MAX   = _env("KD_CLF_BLUR_SIGMA_MAX",   1.0)
+
+CLF_NOISE_PROB       = _env("KD_CLF_NOISE_PROB",       0.5)
+CLF_NOISE_STD_MIN    = _env("KD_CLF_NOISE_STD_MIN",    0.01)
+CLF_NOISE_STD_MAX    = _env("KD_CLF_NOISE_STD_MAX",    0.05)
+
+CLF_BRIGHTNESS_PROB  = _env("KD_CLF_BRIGHTNESS_PROB",  0.5)
+CLF_BRIGHTNESS_RANGE = _env("KD_CLF_BRIGHTNESS_RANGE", 0.20)
+
+CLF_CONTRAST_PROB    = _env("KD_CLF_CONTRAST_PROB",    0.5)
+CLF_CONTRAST_RANGE   = _env("KD_CLF_CONTRAST_RANGE",   0.20)
+
+CLF_MORFO_PROB       = _env("KD_CLF_MORFO_PROB",       0.3)
+CLF_MORFO_K_MIN      = _env("KD_CLF_MORFO_K_MIN",      2)
+CLF_MORFO_K_MAX      = _env("KD_CLF_MORFO_K_MAX",      3)
+
+CLF_JPEG_PROB        = _env("KD_CLF_JPEG_PROB",        0.4)
+CLF_JPEG_QUALITY_MIN = _env("KD_CLF_JPEG_QUALITY_MIN", 30)
+CLF_JPEG_QUALITY_MAX = _env("KD_CLF_JPEG_QUALITY_MAX", 90)
+
+CLF_ROTATION_PROB    = _env("KD_CLF_ROTATION_PROB",    0.3)
+CLF_ROTATION_MAX     = _env("KD_CLF_ROTATION_MAX",     3.0)

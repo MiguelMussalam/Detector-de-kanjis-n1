@@ -34,8 +34,8 @@ def get_kanjis(kanji_level) -> list:
 
 
 if __name__ == "__main__":
-    kanji_level = ""
+    kanji_level = "n1"
     kanjis = get_kanjis(kanji_level)
     print('total kanjis ', kanji_level + ':', len(kanjis))
     print('Kanjis', kanji_level + ':')
-    print(kanjis[:10], "... (truncado)")
+    print(kanjis[:10], "... (truncado)")

@@ -6,3 +6,5 @@ fonttools
 requests
 Pillow
 pyyaml
+tqdm
+scipy
