@@ -2,3 +2,7 @@ ultralytics
 opencv-python
 mss
 numpy
+fonttools
+requests
+Pillow
+pyyaml

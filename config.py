@@ -56,51 +56,10 @@ def _buscar_manga109_diretorio():
 
 MANGA109_DIR = _buscar_manga109_diretorio()
 MANGA109_IMAGES = os.path.join(MANGA109_DIR, "images")
-
-# -----------------------------------------------------------------------
-# Modo de treino do detector
-# -----------------------------------------------------------------------
-# Valores possíveis: "manga109" | "dado_sintetico" | "misto"
-MODO_TREINO = _env("KD_MODO_TREINO", "manga109")
-
-# -----------------------------------------------------------------------
-# Caminhos do Manga109 anotado
-# -----------------------------------------------------------------------
 MANGA109_ANNOTATIONS = os.path.join(MANGA109_DIR, "annotations")
-MANGA109_YOLO_DIR    = os.path.join(DATA_DIR, "manga109_yolo")
 
-# Split do Manga109 (baseado em Ogawa et al., 2018)
-# 99 volumes para treino, 10 volumes para validação
-MANGA109_VAL_VOLUMES = [
-    "YamatoNoHane", "RisingGirl", "Hamlet", "TaiyouNiSmash",
-    "UchuKigekiM774", "WarewareHaOniDearu", "YumeNoKayoiji",
-    "KarakuriDouji", "EverydayOsakanaChan", "HealingPlanet"
-]
-# Os 99 volumes restantes são automaticamente treino
-
-# -----------------------------------------------------------------------
-# Caminhos do dataset sintético (gerado por generate_pages.py)
-# -----------------------------------------------------------------------
-SYNTHETIC_YOLO_DIR = os.path.join(DATA_DIR, "synthetic_yolo")
-
-# -----------------------------------------------------------------------
-# Parâmetros do modo misto
-# -----------------------------------------------------------------------
-# Proporção de imagens sintéticas em relação ao total do Manga109 de treino
-# Ex: 0.25 significa 25% da quantidade do Manga109 de treino
-MISTO_RATIO_SINTETICO = 0.25
-
-# Dataset sintético (mantido para compatibilidade com generate_pages.py)
-SYNTHETIC_DIR   = os.path.join(DATA_DIR, "synthetic")
-PAGES_DIR       = os.path.join(SYNTHETIC_DIR, "pages")
-
-# Dataset YOLO (estrutura images/labels train/val)
-DATASET_DIR     = SYNTHETIC_YOLO_DIR
-TRAIN_IMG_DIR   = os.path.join(DATASET_DIR, "images", "train")
-VAL_IMG_DIR     = os.path.join(DATASET_DIR, "images", "val")
-TRAIN_LBL_DIR   = os.path.join(DATASET_DIR, "labels", "train")
-VAL_LBL_DIR     = os.path.join(DATASET_DIR, "labels", "val")
-
+# Caminho do data.yaml do dataset YOLO (gerado pelo notebook de treino)
+DATA_YAML = _env("KD_DATA_YAML", os.path.join(DATA_DIR, "data.yaml"))
 
 # URLs externas (não tunáveis)
 KANJI_DATA_URL  = "https://raw.githubusercontent.com/davidluzgouveia/kanji-data/master/kanji.json"
@@ -120,18 +79,6 @@ FONTES_URL = {
 # Parâmetros tunáveis — lidos de variáveis de ambiente (com fallback padrão)
 # ---------------------------------------------------------------------------
 
-# Dataset
-CROP_SIZE       = _env("KD_CROP_SIZE",    640)   # tamanho do crop em pixels
-PAGES_AMOUNT    = _env("KD_PAGES_AMOUNT", 20) # total de páginas sintéticas (aumentado de 12000)
-
-# Posicionamento de texto
-GAP_BLOCO = _env("KD_GAP_BLOCO", 12)
-GAP_CHAR        = _env("KD_GAP_CHAR",    4)
-GAP_COL         = _env("KD_GAP_COL",     8)
-LIMITE_DESVIO_REGIAO   = _env("KD_LIMITE_DESVIO",    25)
-MAX_TENTATIVAS_POSICAO = _env("KD_MAX_TENTATIVAS",    30)
-BBOX_MARGEM            = _env("KD_BBOX_MARGEM",      0.10)  # expansao proporcional das bboxes (ex: 0.10 = +10%)
-
 # Treino YOLO
 YOLO_MODEL      = _env("KD_YOLO_MODEL",  "yolo26n.pt")
 EPOCHS          = _env("KD_EPOCHS",      50)
@@ -140,38 +87,3 @@ BATCH           = _env("KD_BATCH",       16)
 KAGGLE_WORKERS  = _env("KD_KAGGLE_WORKERS", 2)   # T4/P100 têm 2 vCPUs
 LOCAL_WORKERS   = _env("KD_LOCAL_WORKERS",  4)
 PROJECT_NAME    = _env("KD_PROJECT_NAME", "kanji_detector")
-KAGGLE_DATASET  = _env("KD_KAGGLE_DATASET", "kanji-detector-dataset")
-
-# Imagens negativas
-PROB_NEGATIVA   = _env("KD_PROB_NEGATIVA", 0.20)  # 20% das imagens sem nenhum caractere
-
-# Quantidade de blocos por imagem
-N_BLOCOS_MIN    = _env("KD_N_BLOCOS_MIN",  3)
-N_BLOCOS_MAX    = _env("KD_N_BLOCOS_MAX",  8)
-
-# Tamanho de cada bloco
-N_COLUNAS_MIN        = _env("KD_N_COLUNAS_MIN",        2)
-N_COLUNAS_MAX        = _env("KD_N_COLUNAS_MAX",        6)
-CHARS_POR_COLUNA_MIN = _env("KD_CHARS_POR_COLUNA_MIN", 6)
-CHARS_POR_COLUNA_MAX = _env("KD_CHARS_POR_COLUNA_MAX", 16)
-
-# Blur
-BLUR_PROB       = _env("KD_BLUR_PROB",       0.50)
-BLUR_SIGMA_MIN  = _env("KD_BLUR_SIGMA_MIN",  0.1)
-BLUR_SIGMA_MAX  = _env("KD_BLUR_SIGMA_MAX",  2.5)
-
-# Morfologia
-MORFO_PROB      = _env("KD_MORFO_PROB",      0.40)
-MORFO_K_MIN     = _env("KD_MORFO_K_MIN",     2)
-MORFO_K_MAX     = _env("KD_MORFO_K_MAX",     4)
-MORFO_ITER_MIN  = _env("KD_MORFO_ITER_MIN",  1)
-MORFO_ITER_MAX  = _env("KD_MORFO_ITER_MAX",  3)
-
-# Ruído
-RUIDO_PROB      = _env("KD_RUIDO_PROB",      0.60)
-RUIDO_STD_MIN   = _env("KD_RUIDO_STD_MIN",   0.01)
-RUIDO_STD_MAX   = _env("KD_RUIDO_STD_MAX",   0.25)
-
-# Rotação
-ROTACAO_PROB    = _env("KD_ROTACAO_PROB",    0.40)
-ROTACAO_MAX     = _env("KD_ROTACAO_MAX",     3.0)  # graus (±)
