@@ -153,3 +153,19 @@ CLF_JPEG_QUALITY_MAX = _env("KD_CLF_JPEG_QUALITY_MAX", 90)
 
 CLF_ROTATION_PROB    = _env("KD_CLF_ROTATION_PROB",    0.3)
 CLF_ROTATION_MAX     = _env("KD_CLF_ROTATION_MAX",     3.0)
+
+# ---------------------------------------------------------------------------
+# Classificador — modelo e treino
+# ---------------------------------------------------------------------------
+
+# Backbone (arquitetura da rede)
+CLF_MODEL_ARCH   = _env("KD_CLF_MODEL_ARCH", "resnet18")
+CLF_PRETRAINED   = _env("KD_CLF_PRETRAINED", True)
+
+# Normalização (padrão ImageNet — compatível com backbones pré-treinados)
+CLF_NORM_MEAN    = [0.485, 0.456, 0.406]
+CLF_NORM_STD     = [0.229, 0.224, 0.225]
+
+# DataLoader
+CLF_BATCH_SIZE   = _env("KD_CLF_BATCH_SIZE", 128)
+CLF_NUM_WORKERS  = _env("KD_CLF_NUM_WORKERS", 4)
