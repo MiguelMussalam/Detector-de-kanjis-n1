@@ -169,3 +169,13 @@ CLF_NORM_STD     = [0.229, 0.224, 0.225]
 # DataLoader
 CLF_BATCH_SIZE   = _env("KD_CLF_BATCH_SIZE", 128)
 CLF_NUM_WORKERS  = _env("KD_CLF_NUM_WORKERS", 4)
+
+# ---------------------------------------------------------------------------
+# Classificador — loop de treino
+# ---------------------------------------------------------------------------
+
+CLF_EPOCHS         = _env("KD_CLF_EPOCHS", 30)
+CLF_LR             = _env("KD_CLF_LR", 3e-4)
+CLF_WEIGHT_DECAY   = _env("KD_CLF_WEIGHT_DECAY", 1e-4)
+CLF_PATIENCE       = _env("KD_CLF_PATIENCE", 7)      # early stopping
+CLF_PROJECT_NAME   = _env("KD_CLF_PROJECT_NAME", "kanji_classifier")

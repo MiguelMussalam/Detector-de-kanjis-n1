@@ -2,6 +2,8 @@
 data/
 assets/fonts/
 runs/
+kanji_detector/
+kanji_classifier/
 *.pt
 *.zip
 
