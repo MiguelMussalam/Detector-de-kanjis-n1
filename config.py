@@ -179,3 +179,23 @@ CLF_LR             = _env("KD_CLF_LR", 3e-4)
 CLF_WEIGHT_DECAY   = _env("KD_CLF_WEIGHT_DECAY", 1e-4)
 CLF_PATIENCE       = _env("KD_CLF_PATIENCE", 7)      # early stopping
 CLF_PROJECT_NAME   = _env("KD_CLF_PROJECT_NAME", "kanji_classifier")
+
+# ---------------------------------------------------------------------------
+# Pipeline de inferência (detector + classificador)
+# ---------------------------------------------------------------------------
+
+# Pesos treinados (o do detector já usa weights/best.pt em outros lugares do repo)
+DETECTOR_WEIGHTS_PATH = _env("KD_DETECTOR_WEIGHTS_PATH", os.path.join(ROOT_DIR, "weights", "best.pt"))
+CLF_WEIGHTS_PATH       = _env("KD_CLF_WEIGHTS_PATH", os.path.join(ROOT_DIR, "weights", "classifier_best.pt"))
+
+# Convenções decididas no roteiro do projeto (ver docs/pipeline.md)
+PIPELINE_MIN_BBOX_HEIGHT = _env("KD_PIPELINE_MIN_BBOX_HEIGHT", 15)    # px — bbox menor que isso é descartada
+PIPELINE_BBOX_PADDING    = _env("KD_PIPELINE_BBOX_PADDING", 0.10)     # expande bbox +10% antes do crop
+
+# Inferência do detector (calibrados na rodada anterior — ver notebooks/01_detector_train.ipynb)
+PIPELINE_DET_CONF  = _env("KD_PIPELINE_DET_CONF", 0.30)
+PIPELINE_DET_IOU   = _env("KD_PIPELINE_DET_IOU", 0.40)
+PIPELINE_DET_MAX_DET = _env("KD_PIPELINE_DET_MAX_DET", 1000)
+
+# Abaixo desse valor, a predição do classificador é marcada como incerta (não é rejeição/descarte)
+PIPELINE_CLS_CONF_LOW = _env("KD_PIPELINE_CLS_CONF_LOW", 0.5)

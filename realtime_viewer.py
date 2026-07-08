@@ -1,44 +1,66 @@
 import os
 import sys
 import time
+import glob
+
 import numpy as np
 import cv2
 import mss
-from ultralytics import YOLO
+from PIL import Image, ImageDraw, ImageFont
+
+from src.pipeline.inference import Pipeline
+from config import FONTS_DIR, PIPELINE_CLS_CONF_LOW
+
+
+def carregar_fonte_overlay(tamanho=18):
+    """cv2.putText nao suporta CJK, entao o overlay do kanji previsto usa PIL + fonte japonesa."""
+    candidatos = glob.glob(os.path.join(FONTS_DIR, "*.ttf"))
+    if not candidatos:
+        raise FileNotFoundError(
+            "Nenhuma fonte encontrada em assets/fonts/. Rode `python -m src.helper.fonts` primeiro."
+        )
+    return ImageFont.truetype(candidatos[0], tamanho)
+
+
+def desenhar_deteccoes(frame_bgr, deteccoes, fonte):
+    """
+    Desenha bbox + kanji previsto + confianca do classificador em cada deteccao.
+    Verde: confianca do classificador >= PIPELINE_CLS_CONF_LOW. Laranja: abaixo disso
+    (previsao incerta — pode ser um kanji dificil ou uma deteccao que nao e kanji de verdade,
+    ex: onomatopeia em letra latina que o detector capturou por engano).
+    """
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(frame_rgb)
+    draw = ImageDraw.Draw(img_pil)
+
+    for det in deteccoes:
+        x1, y1, x2, y2 = det.bbox
+        cor = (0, 255, 0) if det.confianca_cls >= PIPELINE_CLS_CONF_LOW else (255, 140, 0)
+
+        draw.rectangle([x1, y1, x2, y2], outline=cor, width=2)
+        texto = f"{det.kanji} {det.confianca_cls:.2f}"
+        draw.text((x1, max(0, y1 - 20)), texto, font=fonte, fill=cor)
+
+    frame_rgb_out = np.array(img_pil)
+    return cv2.cvtColor(frame_rgb_out, cv2.COLOR_RGB2BGR)
+
 
 def main():
     print("=" * 60)
-    print("      YOLO Manga OCR - Real-Time Screen Inference      ")
+    print("   Pipeline Completo (Detector + Classificador N1) - Real-Time   ")
     print("=" * 60)
 
-    # 1. Definir caminhos e carregar o modelo
-    weights_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights")
-    best_weights = os.path.join(weights_dir, "best.pt")
-    fallback_weights = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yolo26n.pt")
-
-    if os.path.exists(best_weights):
-        model_path = best_weights
-        print(f"[INFO] Carregando modelo treinado: {model_path}")
-    elif os.path.exists(fallback_weights):
-        model_path = fallback_weights
-        print(f"[WARNING] Pesos '{best_weights}' nao encontrados.")
-        print(f"[INFO] Usando modelo fallback padrão: {model_path}")
-    else:
-        print("[ERROR] Nenhum modelo YOLO encontrado!")
-        print(f"Por favor, coloque o arquivo de pesos 'best.pt' em: {best_weights}")
-        print("Ou certifique-se de ter o modelo base 'yolo26n.pt' na raiz do projeto.")
-        sys.exit(1)
-
+    print("[INFO] Carregando pipeline (detector + classificador)...")
     try:
-        model = YOLO(model_path)
-        print("[INFO] Modelo carregado com sucesso!")
-    except Exception as e:
-        print(f"[ERROR] Falha ao carregar o modelo YOLO: {e}")
+        pipeline = Pipeline()
+    except FileNotFoundError as e:
+        print(f"[ERROR] {e}")
         sys.exit(1)
+    fonte = carregar_fonte_overlay()
+    print("[INFO] Pipeline carregado com sucesso!")
 
-    # 2. Configurar captura de tela com mss
+    # Configurar captura de tela com mss
     with mss.MSS() as sct:
-        # Usar monitor primario
         monitors = sct.monitors
         if len(monitors) > 1:
             monitor = monitors[1]
@@ -63,7 +85,6 @@ def main():
         }
 
         def clip_region(r):
-            # Garante limites minimos e maximos da regiao de captura
             r["width"] = max(100, min(r["width"], monitor["width"]))
             r["height"] = max(100, min(r["height"], monitor["height"]))
             r["left"] = max(monitor["left"], min(r["left"], monitor["left"] + monitor["width"] - r["width"]))
@@ -80,59 +101,48 @@ def main():
         print("-" * 60)
 
         prev_time = time.time()
-        
-        while True:
-            start_frame_time = time.time()
 
-            # Capturar regiao da tela
+        while True:
             try:
                 screenshot = sct.grab(region)
             except Exception as e:
                 print(f"[ERROR] Erro na captura de tela: {e}")
                 break
 
-            # Converter BGRA para BGR
             img = np.array(screenshot)
             frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
-            # Executar inferencia com YOLO
-            # verbose=False evita poluir o terminal a cada frame
-            results = model(frame, verbose=False)
+            # Executar pipeline completo: detector -> crop -> classificador
+            deteccoes = pipeline.predict(frame)
+            annotated_frame = desenhar_deteccoes(frame, deteccoes, fonte)
 
-            # Renderizar bboxes na imagem
-            annotated_frame = results[0].plot()
-
-            # Calcular FPS
             curr_time = time.time()
             fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0.0
             prev_time = curr_time
 
-            # Desenhar informações na tela
             cv2.putText(
-                annotated_frame, 
-                f"FPS: {fps:.1f} | Regiao: {region['width']}x{region['height']}", 
-                (15, 35), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                0.8, 
-                (0, 255, 0), 
-                2, 
+                annotated_frame,
+                f"FPS: {fps:.1f} | Regiao: {region['width']}x{region['height']} | Deteccoes: {len(deteccoes)}",
+                (15, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 0),
+                2,
                 cv2.LINE_AA
             )
             cv2.putText(
-                annotated_frame, 
-                "[Q] Sair | [WASD] Mover | [R/F] Redimensionar", 
-                (15, annotated_frame.shape[0] - 15), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                0.6, 
-                (255, 255, 255), 
-                1, 
+                annotated_frame,
+                "[Q] Sair | [WASD] Mover | [R/F] Redimensionar",
+                (15, annotated_frame.shape[0] - 15),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                1,
                 cv2.LINE_AA
             )
 
-            # Mostrar imagem
-            cv2.imshow('YOLO Manga OCR - Real Time', annotated_frame)
+            cv2.imshow('Pipeline Kanji N1 - Real Time', annotated_frame)
 
-            # Tratar entrada do usuario
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord('q'):
@@ -153,19 +163,20 @@ def main():
             elif key == ord('r'):
                 region["width"] += 50
                 region["height"] += 50
-                # Centraliza a expansao
                 region["left"] -= 25
                 region["top"] -= 25
                 clip_region(region)
             elif key == ord('f'):
                 region["width"] -= 50
                 region["height"] -= 50
-                # Centraliza a reducao
                 region["left"] += 25
                 region["top"] += 25
                 clip_region(region)
             elif key == ord('h'):
                 print(f"[DEBUG] Regiao de Captura: Top={region['top']}, Left={region['left']}, Lg={region['width']}, Al={region['height']}")
+                print(f"[DEBUG] {len(deteccoes)} deteccoes no frame atual:")
+                for det in deteccoes:
+                    print(f"    {det.kanji} ({det.codepoint}) det={det.confianca_det:.2f} cls={det.confianca_cls:.2f}")
 
         cv2.destroyAllWindows()
 
