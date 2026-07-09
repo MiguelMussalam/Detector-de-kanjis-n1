@@ -53,6 +53,8 @@ from config import (
     CLF_MORFO_PROB, CLF_MORFO_K_MIN, CLF_MORFO_K_MAX,
     CLF_JPEG_PROB, CLF_JPEG_QUALITY_MIN, CLF_JPEG_QUALITY_MAX,
     CLF_ROTATION_PROB, CLF_ROTATION_MAX,
+    CLF_OUTROS_LABEL, CLF_OUTROS_SAMPLES_TRAIN, CLF_OUTROS_SAMPLES_VAL,
+    CLF_OUTROS_PROP_KANJI, CLF_OUTROS_PROP_KANA, CLF_OUTROS_PROP_LATIM, CLF_OUTROS_PROP_RUIDO,
 )
 from src.helper.kanjis import get_kanjis
 from src.helper.fonts import get_fonts_list
@@ -323,6 +325,83 @@ def generate_sanity(kanjis: list, fonts: list, output_dir: str, count: int, seed
 
 
 # ---------------------------------------------------------------------------
+# Classe "outros" (rejeição de não-N1)
+# ---------------------------------------------------------------------------
+
+def build_outros_pools(n1_kanjis: list) -> dict:
+    """
+    Monta os pools de caracteres não-N1 usados na classe "outros":
+      - kanji: qualquer kanji fora da lista N1
+      - kana:  hiragana + katakana
+      - latim: letras e dígitos ASCII
+    "ruido" não tem pool de caracteres — é tratado à parte (fundo vazio/degradado).
+    """
+    n1_set = set(n1_kanjis)
+    todos_kanjis = get_kanjis("")  # sem filtro de nível = todos do kanji.json
+    pool_kanji = [k for k in todos_kanjis if k not in n1_set]
+
+    pool_kana = (
+        [chr(c) for c in range(0x3041, 0x3097)] +  # hiragana
+        [chr(c) for c in range(0x30A1, 0x30F7)]    # katakana
+    )
+
+    pool_latim = list(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!?.,"
+    )
+
+    return {"kanji": pool_kanji, "kana": pool_kana, "latim": pool_latim}
+
+
+def generate_noise_sample(rng: random.Random, output_size: int) -> np.ndarray:
+    """
+    Amostra "outros" sem nenhum glyph — simula uma bbox do detector que não
+    capturou um caractere de verdade (fundo/screentone/arte confundido com texto).
+    """
+    canvas = np.full((output_size, output_size), 255, dtype=np.uint8)
+    img = apply_paper_background(canvas, rng)
+    img = apply_blur(img, rng)
+    img = apply_noise(img, rng)
+    img = apply_brightness_contrast(img, rng)
+    img = apply_jpeg(img, rng)
+    return img
+
+
+def generate_outros_split(fonts: list, pools: dict, samples: int,
+                          output_dir: str, seed: int, split_name: str):
+    """Gera a pasta CLF_OUTROS_LABEL inteira, misturando as subcategorias."""
+    rng = random.Random(seed)
+    np.random.seed(seed)
+
+    class_dir = os.path.join(output_dir, CLF_OUTROS_LABEL)
+    os.makedirs(class_dir, exist_ok=True)
+
+    categorias = (
+        ["kanji"] * round(samples * CLF_OUTROS_PROP_KANJI) +
+        ["kana"]  * round(samples * CLF_OUTROS_PROP_KANA) +
+        ["latim"] * round(samples * CLF_OUTROS_PROP_LATIM) +
+        ["ruido"] * round(samples * CLF_OUTROS_PROP_RUIDO)
+    )
+    rng.shuffle(categorias)
+
+    for i, cat in enumerate(tqdm(categorias, desc=f"[{split_name}-outros]")):
+        font_path = rng.choice(fonts)
+        font_size = rng.choice(CLASSIFIER_FONT_SIZES)
+        try:
+            if cat == "ruido":
+                img = generate_noise_sample(rng, CLASSIFIER_INPUT_SIZE)
+            else:
+                char = rng.choice(pools[cat])
+                img = generate_sample(
+                    char=char, font_path=font_path, font_size=font_size,
+                    rng=rng, output_size=CLASSIFIER_INPUT_SIZE,
+                    canvas_margin=CLASSIFIER_CANVAS_MARGIN,
+                )
+            Image.fromarray(img).save(os.path.join(class_dir, f"{i:04d}.png"))
+        except Exception as e:
+            print(f"[WARN] Falha outros ({cat}): {e}")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -334,6 +413,8 @@ def main():
                         help="Só regenera o modo sanity, sem train/val")
     parser.add_argument("--skip-sanity", action="store_true",
                         help="Pula geração do sanity")
+    parser.add_argument("--skip-outros", action="store_true",
+                        help="Pula geração da classe 'outros' (rejeição de não-N1)")
     args = parser.parse_args()
 
     # Carregar kanji e fontes
@@ -375,6 +456,20 @@ def main():
           f"{CLASSIFIER_SAMPLES_VAL * len(kanjis)} crops")
     generate_split(kanjis, fonts, CLASSIFIER_SAMPLES_VAL,
                    CLASSIFIER_VAL_DIR, CLASSIFIER_SEED_VAL, "val")
+
+    # Outros (rejeição de não-N1)
+    if not args.skip_outros:
+        print(f"\n[INFO] Montando pools da classe '{CLF_OUTROS_LABEL}'...")
+        pools = build_outros_pools(kanjis)
+        print(f"[INFO] Pool kanji não-N1: {len(pools['kanji'])} | kana: {len(pools['kana'])} | latim: {len(pools['latim'])}")
+
+        print(f"\n[INFO] Gerando treino '{CLF_OUTROS_LABEL}': {CLF_OUTROS_SAMPLES_TRAIN} crops")
+        generate_outros_split(fonts, pools, CLF_OUTROS_SAMPLES_TRAIN,
+                             CLASSIFIER_TRAIN_DIR, CLASSIFIER_SEED_TRAIN, "train")
+
+        print(f"\n[INFO] Gerando validação '{CLF_OUTROS_LABEL}': {CLF_OUTROS_SAMPLES_VAL} crops")
+        generate_outros_split(fonts, pools, CLF_OUTROS_SAMPLES_VAL,
+                             CLASSIFIER_VAL_DIR, CLASSIFIER_SEED_VAL, "val")
 
     print("\n[INFO] Geração completa!")
 

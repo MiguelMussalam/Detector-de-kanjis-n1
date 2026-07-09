@@ -4,11 +4,13 @@ inference.py
 Pipeline completo: detector (YOLO, bbox de caractere) -> crop -> classificador
 (ResNet-18, kanji N1) -> kanji previsto.
 
-O classificador já é treinado apenas sobre as 1232 classes N1
-(CLASSIFIER_KANJI_LEVEL="n1" em config.py) — ou seja, toda predição que ele
-retorna já É um kanji N1 por construção. Não existe um filtro de codepoint
-separado aqui: o "filtro N1" acontece no escopo das classes do modelo, não
-como pós-processamento.
+O classificador é treinado sobre as 1232 classes N1 (CLASSIFIER_KANJI_LEVEL="n1"
+em config.py) mais uma classe extra CLF_OUTROS_LABEL ("OUTROS") — hiragana/
+katakana, kanji fora do N1, letras latinas e
+ruído/fundo vazio. `det.kanji` pode vir literalmente como "OUTROS" quando o
+classificador rejeita a detecção por não parecer um kanji N1 de verdade — não
+existe um filtro de codepoint em separado, a rejeição acontece no próprio
+classificador.
 
 Uso:
     from src.pipeline.inference import Pipeline
@@ -29,6 +31,7 @@ from config import (
     DETECTOR_WEIGHTS_PATH, CLF_WEIGHTS_PATH,
     PIPELINE_MIN_BBOX_HEIGHT, PIPELINE_BBOX_PADDING,
     PIPELINE_DET_CONF, PIPELINE_DET_IOU, PIPELINE_DET_MAX_DET,
+    CLF_OUTROS_LABEL,
 )
 from src.classifier.model import build_model
 from src.classifier.dataset import build_transform
@@ -77,6 +80,8 @@ def load_classifier(weights_path: str = None, device: str = "cpu"):
 
 
 def codepoint_to_kanji(codepoint_str: str) -> str:
+    if codepoint_str == CLF_OUTROS_LABEL:
+        return codepoint_str
     return chr(int(codepoint_str.replace("U+", ""), 16))
 
 

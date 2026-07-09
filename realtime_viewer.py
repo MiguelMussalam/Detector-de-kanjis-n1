@@ -9,7 +9,7 @@ import mss
 from PIL import Image, ImageDraw, ImageFont
 
 from src.pipeline.inference import Pipeline
-from config import FONTS_DIR, PIPELINE_CLS_CONF_LOW
+from config import FONTS_DIR, PIPELINE_CLS_CONF_LOW, CLF_OUTROS_LABEL
 
 
 def carregar_fonte_overlay(tamanho=18):
@@ -25,9 +25,10 @@ def carregar_fonte_overlay(tamanho=18):
 def desenhar_deteccoes(frame_bgr, deteccoes, fonte):
     """
     Desenha bbox + kanji previsto + confianca do classificador em cada deteccao.
+    Cinza: classificador rejeitou como CLF_OUTROS_LABEL (nao parece kanji N1 —
+    ex: onomatopeia em letra latina, hiragana/katakana, kanji fora do N1).
     Verde: confianca do classificador >= PIPELINE_CLS_CONF_LOW. Laranja: abaixo disso
-    (previsao incerta — pode ser um kanji dificil ou uma deteccao que nao e kanji de verdade,
-    ex: onomatopeia em letra latina que o detector capturou por engano).
+    (previsao incerta, mas ainda dentro das classes N1).
     """
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     img_pil = Image.fromarray(frame_rgb)
@@ -35,7 +36,12 @@ def desenhar_deteccoes(frame_bgr, deteccoes, fonte):
 
     for det in deteccoes:
         x1, y1, x2, y2 = det.bbox
-        cor = (0, 255, 0) if det.confianca_cls >= PIPELINE_CLS_CONF_LOW else (255, 140, 0)
+        if det.kanji == CLF_OUTROS_LABEL:
+            cor = (140, 140, 140)
+        elif det.confianca_cls >= PIPELINE_CLS_CONF_LOW:
+            cor = (0, 255, 0)
+        else:
+            cor = (255, 140, 0)
 
         draw.rectangle([x1, y1, x2, y2], outline=cor, width=2)
         texto = f"{det.kanji} {det.confianca_cls:.2f}"

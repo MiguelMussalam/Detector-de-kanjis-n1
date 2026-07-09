@@ -27,6 +27,7 @@ from config import (
     CLASSIFIER_INPUT_SIZE,
     CLF_NORM_MEAN, CLF_NORM_STD,
     CLF_BATCH_SIZE, CLF_NUM_WORKERS,
+    CLF_OUTROS_LABEL,
 )
 
 
@@ -121,18 +122,24 @@ def build_dataloaders(train_ds: ImageFolder, val_ds: ImageFolder,
 
 def index_to_kanji(class_names: list, index: int) -> str:
     """
-    Recebe class_names de ImageFolder (lista de nomes de pasta 'U+XXXX')
-    e um índice de classe, retorna o caractere kanji.
+    Recebe class_names de ImageFolder (lista de nomes de pasta 'U+XXXX', mais a
+    classe especial CLF_OUTROS_LABEL) e um índice de classe, retorna o caractere
+    kanji — ou o próprio label "OUTROS" quando não for um kanji de verdade.
     """
-    codepoint_str = class_names[index]  # 'U+5B66'
+    codepoint_str = class_names[index]  # 'U+5B66' ou 'OUTROS'
+    if codepoint_str == CLF_OUTROS_LABEL:
+        return codepoint_str
     codepoint = int(codepoint_str.replace("U+", ""), 16)
     return chr(codepoint)
 
 
 def kanji_to_index(class_to_idx: dict, kanji: str) -> int:
     """
-    Recebe class_to_idx de ImageFolder e um caractere, retorna o índice.
+    Recebe class_to_idx de ImageFolder e um caractere (ou CLF_OUTROS_LABEL),
+    retorna o índice.
     """
+    if kanji == CLF_OUTROS_LABEL:
+        return class_to_idx[CLF_OUTROS_LABEL]
     codepoint_str = f"U+{ord(kanji):04X}"
     return class_to_idx[codepoint_str]
 

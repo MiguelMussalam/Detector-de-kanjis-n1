@@ -26,6 +26,7 @@ def _env(name: str, default):
 ROOT_DIR        = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR      = os.path.join(ROOT_DIR, "assets")
 DATA_DIR        = os.path.join(ROOT_DIR, "data")
+WEIGHTS_DIR     = os.path.join(ROOT_DIR, "weights")
 
 # Fontes
 FONTS_DIR       = os.path.join(ASSETS_DIR, "fonts")
@@ -73,6 +74,11 @@ FONTES_URL = {
     "Yusei-Magic-Regular":      "https://raw.githubusercontent.com/google/fonts/main/ofl/yuseimagic/YuseiMagic-Regular.ttf",
     "Dela-Gothic-One":          "https://raw.githubusercontent.com/google/fonts/main/ofl/delagothicone/DelaGothicOne-Regular.ttf",
     "Reggae-One":               "https://raw.githubusercontent.com/google/fonts/main/ofl/reggaeone/ReggaeOne-Regular.ttf",
+    "Yuji-Boku-Regular":        "https://raw.githubusercontent.com/Kinutafontfactory/Yuji/master/fonts/ttf/YujiBoku-Regular.ttf",
+    "Zen-Antique-Regular":      "https://raw.githubusercontent.com/googlefonts/zen-antique/main/fonts/ttf/ZenAntique-Regular.ttf",
+    "Kaisei-Tokumin-W5":        "https://raw.githubusercontent.com/Font-Kai/Kaisei-Tokumin/master/Fonts/ttf/FK-Kaisei-tokuminW5.ttf",
+    "Hachi-Maru-Pop-Regular":   "https://raw.githubusercontent.com/noriokanisawa/HachiMaruPop/master/HachiMaruPop-Regular.ttf",
+    "Stick-Regular":            "https://raw.githubusercontent.com/fontworks-fonts/Stick/master/fonts/ttf/Stick-Regular.ttf",
 }
 
 # ---------------------------------------------------------------------------
@@ -105,6 +111,18 @@ CLASSIFIER_INPUT_SIZE    = _env("KD_CLF_INPUT_SIZE", 64)
 # Número de crops por classe (split 80/20)
 CLASSIFIER_SAMPLES_TRAIN = _env("KD_CLF_SAMPLES_TRAIN", 40)
 CLASSIFIER_SAMPLES_VAL   = _env("KD_CLF_SAMPLES_VAL", 10)
+
+# Classe "outros" (rejeição de não-N1: hiragana/katakana, kanji fora do N1,
+# letras latinas/dígitos — ex: onomatopeia tipo "RRRR" — e ruído/fundo vazio)
+CLF_OUTROS_LABEL          = "OUTROS"
+CLF_OUTROS_SAMPLES_TRAIN  = _env("KD_CLF_OUTROS_SAMPLES_TRAIN", 2000)
+CLF_OUTROS_SAMPLES_VAL    = _env("KD_CLF_OUTROS_SAMPLES_VAL", 500)
+
+# Proporção de cada subcategoria dentro do pool "outros" (soma ~1.0)
+CLF_OUTROS_PROP_KANJI = _env("KD_CLF_OUTROS_PROP_KANJI", 0.35)  # kanji fora do N1
+CLF_OUTROS_PROP_KANA  = _env("KD_CLF_OUTROS_PROP_KANA",  0.25)  # hiragana/katakana
+CLF_OUTROS_PROP_LATIM = _env("KD_CLF_OUTROS_PROP_LATIM", 0.25)  # letras/dígitos latinos
+CLF_OUTROS_PROP_RUIDO = _env("KD_CLF_OUTROS_PROP_RUIDO", 0.15)  # fundo vazio/ruído
 
 # Sanity check visual
 CLASSIFIER_SANITY_COUNT  = _env("KD_CLF_SANITY_COUNT", 20)
@@ -185,8 +203,8 @@ CLF_PROJECT_NAME   = _env("KD_CLF_PROJECT_NAME", "kanji_classifier")
 # ---------------------------------------------------------------------------
 
 # Pesos treinados (o do detector já usa weights/best.pt em outros lugares do repo)
-DETECTOR_WEIGHTS_PATH = _env("KD_DETECTOR_WEIGHTS_PATH", os.path.join(ROOT_DIR, "weights", "best.pt"))
-CLF_WEIGHTS_PATH       = _env("KD_CLF_WEIGHTS_PATH", os.path.join(ROOT_DIR, "weights", "classifier_best.pt"))
+DETECTOR_WEIGHTS_PATH = _env("KD_DETECTOR_WEIGHTS_PATH", os.path.join(WEIGHTS_DIR, "best.pt"))
+CLF_WEIGHTS_PATH       = _env("KD_CLF_WEIGHTS_PATH", os.path.join(WEIGHTS_DIR, "classifier_best.pt"))
 
 # Convenções decididas no roteiro do projeto (ver docs/pipeline.md)
 PIPELINE_MIN_BBOX_HEIGHT = _env("KD_PIPELINE_MIN_BBOX_HEIGHT", 15)    # px — bbox menor que isso é descartada
@@ -199,3 +217,15 @@ PIPELINE_DET_MAX_DET = _env("KD_PIPELINE_DET_MAX_DET", 1000)
 
 # Abaixo desse valor, a predição do classificador é marcada como incerta (não é rejeição/descarte)
 PIPELINE_CLS_CONF_LOW = _env("KD_PIPELINE_CLS_CONF_LOW", 0.5)
+
+# ---------------------------------------------------------------------------
+# ETL9 (validação fora de domínio — manuscrito, proxy de generalização)
+# ---------------------------------------------------------------------------
+
+# Diretório onde ficam os dados brutos do ETL9 (ver src/helper/etl9.py para a
+# estrutura de pastas exata esperada pela biblioteca etl_data_reader — não é
+# tão simples quanto jogar os arquivos soltos aqui dentro).
+ETL9_DIR         = _env("KD_ETL9_DIR", os.path.join(DATA_DIR, "etl9"))
+
+# Qual versão usar: "ETL9B" (binário, mais leve, 5 arquivos) ou "ETL9G" (grayscale, mais fiel, 50 arquivos)
+ETL9_VERSION     = _env("KD_ETL9_VERSION", "ETL9G")
