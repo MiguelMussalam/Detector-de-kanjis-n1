@@ -78,13 +78,19 @@ def main():
 
     model = YOLO(model_path)
 
+    # Caminho absoluto para o project: versoes recentes do Ultralytics podem
+    # prefixar um "runs/<task>/" na frente de um project relativo, o que
+    # quebra qualquer calculo de caminho feito por fora (ex: no notebook).
+    # Absoluto remove essa ambiguidade.
+    project_dir = os.path.join(ROOT_DIR, PROJECT_NAME)
+
     results = model.train(
         data     = DATA_YAML,
         epochs   = EPOCHS,
         imgsz    = IMGSZ,
         batch    = BATCH,
         workers  = workers,
-        project  = PROJECT_NAME,
+        project  = project_dir,
         name     = "run",
         exist_ok = True,
         save     = True,
@@ -92,6 +98,15 @@ def main():
 
     print("[INFO] Treino concluido!")
     print(f"[INFO] Resultados em: {results.save_dir}")
+
+    # Grava o caminho real de saida num arquivo marcador, para o notebook
+    # (ou qualquer outro consumidor) ler em vez de tentar reconstruir/adivinhar
+    # o caminho de fora — evita qualquer divergencia de versao do Ultralytics.
+    marcador_path = os.path.join(ROOT_DIR, "ultimo_run_detector.txt")
+    with open(marcador_path, "w", encoding="utf-8") as f:
+        f.write(str(results.save_dir))
+    print(f"[INFO] Caminho gravado em: {marcador_path}")
+
     return results
 
 

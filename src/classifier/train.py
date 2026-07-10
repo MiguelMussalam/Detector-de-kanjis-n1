@@ -23,6 +23,7 @@ from config import (
     CLF_EPOCHS, CLF_LR, CLF_WEIGHT_DECAY, CLF_PATIENCE,
     CLF_PROJECT_NAME, CLF_BATCH_SIZE,
     KAGGLE_WORKERS, LOCAL_WORKERS, ROOT_DIR,
+    CLF_FINETUNE_FROM, CLF_FINETUNE_LR,
 )
 from src.classifier.dataset import build_datasets, build_dataloaders
 from src.classifier.model import build_model, count_parameters
@@ -97,10 +98,26 @@ def main():
 
     print("[INFO] Construindo modelo...")
     model = build_model(num_classes=num_classes).to(DEVICE)
+
+    lr = CLF_LR
+    if CLF_FINETUNE_FROM:
+        print(f"[INFO] Fine-tuning a partir de: {CLF_FINETUNE_FROM}")
+        ckpt = torch.load(CLF_FINETUNE_FROM, map_location=DEVICE, weights_only=False)
+        if ckpt["classes"] != train_ds.classes:
+            raise RuntimeError(
+                f"Classes do checkpoint de fine-tuning ({len(ckpt['classes'])}) nao batem "
+                f"com as classes do dataset atual ({len(train_ds.classes)}). Carregar os "
+                f"pesos assim corromperia o alinhamento indice->classe. Confira se o dataset "
+                f"(sintetico + real mesclado) tem exatamente as mesmas classes do checkpoint."
+            )
+        model.load_state_dict(ckpt["model_state"])
+        lr = CLF_FINETUNE_LR
+        print(f"[INFO] LR de fine-tuning: {lr} (treino do zero usaria {CLF_LR})")
+
     print(f"[INFO] Parametros treinaveis: {count_parameters(model):,}")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=CLF_LR, weight_decay=CLF_WEIGHT_DECAY)
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=CLF_WEIGHT_DECAY)
     scheduler = CosineAnnealingLR(optimizer, T_max=CLF_EPOCHS)
 
     run_dir = os.path.join(ROOT_DIR, CLF_PROJECT_NAME, "run")

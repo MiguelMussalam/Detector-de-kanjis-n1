@@ -113,7 +113,7 @@ CLASSIFIER_SAMPLES_TRAIN = _env("KD_CLF_SAMPLES_TRAIN", 40)
 CLASSIFIER_SAMPLES_VAL   = _env("KD_CLF_SAMPLES_VAL", 10)
 
 # Classe "outros" (rejeição de não-N1: hiragana/katakana, kanji fora do N1,
-# letras latinas/dígitos — ex: onomatopeia tipo "RRRR" — e ruído/fundo vazio)
+# letras latinas/dígitos — ex: onomatopeia e ruído/fundo vazio)
 CLF_OUTROS_LABEL          = "OUTROS"
 CLF_OUTROS_SAMPLES_TRAIN  = _env("KD_CLF_OUTROS_SAMPLES_TRAIN", 2000)
 CLF_OUTROS_SAMPLES_VAL    = _env("KD_CLF_OUTROS_SAMPLES_VAL", 500)
@@ -198,6 +198,11 @@ CLF_WEIGHT_DECAY   = _env("KD_CLF_WEIGHT_DECAY", 1e-4)
 CLF_PATIENCE       = _env("KD_CLF_PATIENCE", 7)      # early stopping
 CLF_PROJECT_NAME   = _env("KD_CLF_PROJECT_NAME", "kanji_classifier")
 
+# Fine-tuning a partir de um checkpoint ja treinado (dado real + sintetico
+# misturado). Vazio ("") = treina do zero (pesos ImageNet), como antes.
+CLF_FINETUNE_FROM = _env("KD_CLF_FINETUNE_FROM", "")
+CLF_FINETUNE_LR   = _env("KD_CLF_FINETUNE_LR", 2e-5)   # bem mais baixo que CLF_LR
+
 # ---------------------------------------------------------------------------
 # Pipeline de inferência (detector + classificador)
 # ---------------------------------------------------------------------------
@@ -229,3 +234,37 @@ ETL9_DIR         = _env("KD_ETL9_DIR", os.path.join(DATA_DIR, "etl9"))
 
 # Qual versão usar: "ETL9B" (binário, mais leve, 5 arquivos) ou "ETL9G" (grayscale, mais fiel, 50 arquivos)
 ETL9_VERSION     = _env("KD_ETL9_VERSION", "ETL9G")
+
+# ---------------------------------------------------------------------------
+# Alinhamento Manga109 (dado real para fine-tuning do classificador)
+# ---------------------------------------------------------------------------
+# Deduz o rótulo de cada caractere real usando a transcrição das falas do
+# Manga109 (<text>) + as bboxes que o NOSSO detector encontra na página inteira.
+# Ver src/helper/manga109_align.py.
+
+MANGA109_ALIGN_DATA_DIR   = os.path.join(DATA_DIR, "classifier_real")
+MANGA109_ALIGN_TRAIN_DIR  = os.path.join(MANGA109_ALIGN_DATA_DIR, "train")
+MANGA109_ALIGN_VAL_DIR    = os.path.join(MANGA109_ALIGN_DATA_DIR, "val")
+
+# Split por volume (não por página/crop, para não vazar dado de val no treino).
+# Mesmo conjunto de 10 volumes historicamente usado como val do Manga109
+# (Ogawa et al., 2018), com KarakuriDouji trocado por KarappoHighschool —
+# não existe nessa versão do dataset baixada.
+MANGA109_ALIGN_VAL_VOLUMES = [
+    "YamatoNoHane", "RisingGirl", "Hamlet", "TaiyouNiSmash",
+    "UchuKigekiM774", "WarewareHaOniDearu", "YumeNoKayoiji",
+    "KarappoHighschool", "EverydayOsakanaChan", "HealingPlanet",
+]
+
+# Tolerância adaptativa (fração da largura mediana das boxes da linha) para
+# agrupar caixas do detector na mesma coluna de leitura — substituiu um valor
+# fixo em pixel, que se mostrou frágil em painéis com colunas compactas.
+MANGA109_ALIGN_COLUNA_TOL_FRAC = _env("KD_ALIGN_COLUNA_TOL_FRAC", 0.5)
+
+# Linhas com mais colunas que isso são descartadas (risco maior de
+# agrupamento errado) mesmo que a contagem de caracteres bata.
+MANGA109_ALIGN_MAX_COLUNAS = _env("KD_ALIGN_MAX_COLUNAS", 3)
+
+# Pontuação/símbolos removidos da transcrição antes de comparar contagem
+# (o detector não foi treinado para caixar esses símbolos como "glifo")
+MANGA109_ALIGN_PONTUACAO = "。、！？!?…‼♥「」『』・（）() 　.,"

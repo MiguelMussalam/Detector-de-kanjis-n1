@@ -22,11 +22,11 @@ def carregar_fonte_overlay(tamanho=18):
     return ImageFont.truetype(candidatos[0], tamanho)
 
 
-def desenhar_deteccoes(frame_bgr, deteccoes, fonte):
+def desenhar_deteccoes(frame_bgr, deteccoes, fonte, mostrar_outros=False):
     """
     Desenha bbox + kanji previsto + confianca do classificador em cada deteccao.
-    Cinza: classificador rejeitou como CLF_OUTROS_LABEL (nao parece kanji N1 —
-    ex: onomatopeia em letra latina, hiragana/katakana, kanji fora do N1).
+    Se mostrar_outros=False (padrao), deteccoes rejeitadas como CLF_OUTROS_LABEL
+    nao sao desenhadas — so aparecem caixas de predicoes que podem ser kanji N1.
     Verde: confianca do classificador >= PIPELINE_CLS_CONF_LOW. Laranja: abaixo disso
     (previsao incerta, mas ainda dentro das classes N1).
     """
@@ -35,13 +35,16 @@ def desenhar_deteccoes(frame_bgr, deteccoes, fonte):
     draw = ImageDraw.Draw(img_pil)
 
     for det in deteccoes:
-        x1, y1, x2, y2 = det.bbox
         if det.kanji == CLF_OUTROS_LABEL:
+            if not mostrar_outros:
+                continue
             cor = (140, 140, 140)
         elif det.confianca_cls >= PIPELINE_CLS_CONF_LOW:
             cor = (0, 255, 0)
         else:
             cor = (255, 140, 0)
+
+        x1, y1, x2, y2 = det.bbox
 
         draw.rectangle([x1, y1, x2, y2], outline=cor, width=2)
         texto = f"{det.kanji} {det.confianca_cls:.2f}"
@@ -102,11 +105,14 @@ def main():
         print("  - [W, A, S, D] : Mover a regiao de captura (Cima, Esquerda, Baixo, Direita)")
         print("  - [R]          : Aumentar tamanho da janela de captura (+50px)")
         print("  - [F]          : Diminuir tamanho da janela de captura (-50px)")
+        print("  - [O]          : Mostrar/esconder deteccoes classificadas como OUTROS")
         print("  - [H]          : Imprimir informacoes de depuracao no terminal")
         print("  - [Q]          : Sair do visualizador")
         print("-" * 60)
 
         prev_time = time.time()
+        mostrar_outros = False
+        print(f"[INFO] Exibindo OUTROS: {mostrar_outros} (pressione [O] para alternar)")
 
         while True:
             try:
@@ -120,7 +126,7 @@ def main():
 
             # Executar pipeline completo: detector -> crop -> classificador
             deteccoes = pipeline.predict(frame)
-            annotated_frame = desenhar_deteccoes(frame, deteccoes, fonte)
+            annotated_frame = desenhar_deteccoes(frame, deteccoes, fonte, mostrar_outros)
 
             curr_time = time.time()
             fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0.0
@@ -178,6 +184,9 @@ def main():
                 region["left"] += 25
                 region["top"] += 25
                 clip_region(region)
+            elif key == ord('o'):
+                mostrar_outros = not mostrar_outros
+                print(f"[INFO] Exibindo OUTROS: {mostrar_outros}")
             elif key == ord('h'):
                 print(f"[DEBUG] Regiao de Captura: Top={region['top']}, Left={region['left']}, Lg={region['width']}, Al={region['height']}")
                 print(f"[DEBUG] {len(deteccoes)} deteccoes no frame atual:")
