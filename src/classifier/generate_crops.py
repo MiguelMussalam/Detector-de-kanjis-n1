@@ -62,10 +62,6 @@ from src.helper.kanjis import get_kanjis
 from src.helper.fonts import get_fonts_list
 
 
-# ---------------------------------------------------------------------------
-# Renderização base
-# ---------------------------------------------------------------------------
-
 def render_glyph(char: str, font_path: str, font_size: int,
                  canvas_size: int) -> np.ndarray:
     """
@@ -76,12 +72,10 @@ def render_glyph(char: str, font_path: str, font_size: int,
     canvas = Image.new("L", (canvas_size, canvas_size), color=255)
     draw = ImageDraw.Draw(canvas)
 
-    # Bbox do glyph nesse font size
     bbox = draw.textbbox((0, 0), char, font=font)
     glyph_w = bbox[2] - bbox[0]
     glyph_h = bbox[3] - bbox[1]
 
-    # Centraliza no canvas (compensando offset do bbox)
     x = (canvas_size - glyph_w) // 2 - bbox[0]
     y = (canvas_size - glyph_h) // 2 - bbox[1]
 
@@ -89,21 +83,18 @@ def render_glyph(char: str, font_path: str, font_size: int,
     return np.array(canvas, dtype=np.uint8)
 
 
-# ---------------------------------------------------------------------------
-# Degradações (aplicadas na ordem definida em docs)
-# ---------------------------------------------------------------------------
-
 def apply_morphology(img: np.ndarray, rng: random.Random) -> np.ndarray:
     """Dilate ou erode leve com kernel pequeno."""
     if rng.random() > CLF_MORFO_PROB:
         return img
     k = rng.randint(CLF_MORFO_K_MIN, CLF_MORFO_K_MAX)
     op = rng.choice(["dilate", "erode"])
-    # Nota: como glyph é preto (0) sobre branco (255), dilate expande fundo (traço mais fino)
-    # e erode expande escuro (traço mais grosso). Trocamos os nomes para intuição correta.
-    if op == "dilate":  # queremos traço mais grosso
+    # Glyph é preto (0) sobre branco (255): a operação morfológica "dilate" (que
+    # expandiria o preto em imagens normais) precisa ser grey_erosion aqui, e
+    # vice-versa -- os nomes das funções do scipy pressupõem primeiro-plano claro.
+    if op == "dilate":
         return grey_erosion(img, size=(k, k))
-    else:               # queremos traço mais fino
+    else:
         return grey_dilation(img, size=(k, k))
 
 
@@ -131,12 +122,9 @@ def apply_translate_and_crop(img: np.ndarray, rng: random.Random,
         dx = rng.randint(-max_dx, max_dx)
         dy = rng.randint(-max_dy, max_dy)
 
-    # Centro de crop deslocado
     cx = w // 2 + dx
     cy = h // 2 + dy
 
-    # Recorte quadrado ao redor do centro (dimensão baseada na maior)
-    # Aqui só centraliza pra downsample no próximo passo
     crop_size = min(h, w)
     x0 = max(0, cx - crop_size // 2)
     y0 = max(0, cy - crop_size // 2)
@@ -248,7 +236,7 @@ def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
         out[mask] = bg[mask]
         return out
 
-    # --- fallback: papel liso sintético (sem pool de fundo real coletado) ---
+    # Fallback: sem pool de fundo real coletado, usa papel liso sintético.
     bg_value = rng.uniform(CLF_BG_VALUE_MIN, CLF_BG_VALUE_MAX)
     bg = np.full((h, w), bg_value, dtype=np.float32)
     noise = np.random.normal(0, CLF_BG_NOISE_STD, (h, w))
@@ -258,10 +246,6 @@ def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
     out[mask] = bg[mask]
     return out
 
-
-# ---------------------------------------------------------------------------
-# Pipeline completo de uma amostra
-# ---------------------------------------------------------------------------
 
 def _contraste_glifo(img: np.ndarray, mask_glifo: np.ndarray) -> float:
     """
@@ -293,7 +277,8 @@ def _aplicar_fundo_e_degradacoes(img_base: np.ndarray, rng: random.Random,
 
 def _renderizar_base(char: str, font_path: str, font_size: int,
                      canvas_margin: float, rng: random.Random, output_size: int) -> np.ndarray:
-    """Passos 1-5: render + morfologia + rotação + translate/crop + resize."""
+    """Render + degradações geométricas, antes do fundo/blur (separado do resto
+    do pipeline pra permitir retry só na parte final, ver generate_sample)."""
     canvas_size = int(font_size * (1 + 2 * canvas_margin))
     img = render_glyph(char, font_path, font_size, canvas_size)
     img = apply_morphology(img, rng)
@@ -308,8 +293,7 @@ def generate_sample(char: str, font_path: str, font_size: int,
     """
     Gera um crop 64x64 do kanji com degradações aplicadas em ordem.
 
-    Duas garantias contra amostra "vazia" (sobra só textura, sem glifo
-    legível -- ver conversa):
+    Duas garantias contra amostra "vazia" (sobra só textura, sem glifo legível):
       1. Antes de degradar: algumas fontes rendem em branco pra um
          caractere raro (glifo ausente/quebrado naquele tamanho). Se a
          fonte sorteada não desenhar pixel suficiente, tenta outras fontes
@@ -341,10 +325,6 @@ def generate_sample(char: str, font_path: str, font_size: int,
     # Esgotou as tentativas -- abre mão de blur/ruído pra garantir legibilidade
     return _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False)
 
-
-# ---------------------------------------------------------------------------
-# Loop principal
-# ---------------------------------------------------------------------------
 
 def codepoint_dir(char: str) -> str:
     """Retorna nome de pasta no formato U+XXXX."""
@@ -412,10 +392,6 @@ def generate_sanity(kanjis: list, fonts: list, output_dir: str, count: int, seed
 
     print(f"[INFO] {count} amostras sanity em: {output_dir}")
 
-
-# ---------------------------------------------------------------------------
-# Classe "outros" (rejeição de não-N1)
-# ---------------------------------------------------------------------------
 
 def build_outros_pools(n1_kanjis: list) -> dict:
     """
@@ -491,10 +467,6 @@ def generate_outros_split(fonts: list, pools: dict, samples: int,
             print(f"[WARN] Falha outros ({cat}): {e}")
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None,
@@ -507,7 +479,6 @@ def main():
                         help="Pula geração da classe 'outros' (rejeição de não-N1)")
     args = parser.parse_args()
 
-    # Carregar kanji e fontes
     print(f"[INFO] Carregando kanji nível {CLASSIFIER_KANJI_LEVEL}...")
     kanjis = get_kanjis(CLASSIFIER_KANJI_LEVEL)
     print(f"[INFO] Total: {len(kanjis)} kanji")
@@ -525,7 +496,6 @@ def main():
     for f in fonts:
         print(f"        - {os.path.basename(f)}")
 
-    # Sanity
     if not args.skip_sanity:
         print(f"\n[INFO] Gerando {CLASSIFIER_SANITY_COUNT} amostras sanity...")
         generate_sanity(kanjis, fonts, CLASSIFIER_SANITY_DIR,
@@ -535,19 +505,16 @@ def main():
         print("[INFO] Modo sanity-only. Encerrando.")
         return
 
-    # Train
     print(f"\n[INFO] Gerando treino: {CLASSIFIER_SAMPLES_TRAIN} amostras × {len(kanjis)} classes = "
           f"{CLASSIFIER_SAMPLES_TRAIN * len(kanjis)} crops")
     generate_split(kanjis, fonts, CLASSIFIER_SAMPLES_TRAIN,
                    CLASSIFIER_TRAIN_DIR, CLASSIFIER_SEED_TRAIN, "train")
 
-    # Val
     print(f"\n[INFO] Gerando validação: {CLASSIFIER_SAMPLES_VAL} amostras × {len(kanjis)} classes = "
           f"{CLASSIFIER_SAMPLES_VAL * len(kanjis)} crops")
     generate_split(kanjis, fonts, CLASSIFIER_SAMPLES_VAL,
                    CLASSIFIER_VAL_DIR, CLASSIFIER_SEED_VAL, "val")
 
-    # Outros (rejeição de não-N1)
     if not args.skip_outros:
         print(f"\n[INFO] Montando pools da classe '{CLF_OUTROS_LABEL}'...")
         pools = build_outros_pools(kanjis)

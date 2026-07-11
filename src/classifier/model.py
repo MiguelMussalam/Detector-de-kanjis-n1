@@ -18,15 +18,9 @@ from torchvision import models
 
 from config import CLF_MODEL_ARCH, CLF_PRETRAINED
 
-
-# ---------------------------------------------------------------------------
-# Backbones suportados
-# ---------------------------------------------------------------------------
-
 def _build_resnet18(num_classes: int, pretrained: bool) -> nn.Module:
     weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
     model = models.resnet18(weights=weights)
-    # Substitui a cabeça (fc) para o número de classes desejado
     in_features = model.fc.in_features
     model.fc = nn.Linear(in_features, num_classes)
     return model
@@ -39,11 +33,6 @@ def _build_efficientnet_b0(num_classes: int, pretrained: bool) -> nn.Module:
     in_features = model.classifier[-1].in_features
     model.classifier[-1] = nn.Linear(in_features, num_classes)
     return model
-
-
-# ---------------------------------------------------------------------------
-# Fábrica
-# ---------------------------------------------------------------------------
 
 BACKBONES = {
     "resnet18":         _build_resnet18,
@@ -78,19 +67,9 @@ def build_model(num_classes: int,
     builder = BACKBONES[arch]
     return builder(num_classes=num_classes, pretrained=pretrained)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def count_parameters(model: nn.Module) -> int:
     """Retorna o número total de parâmetros treináveis do modelo."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-# ---------------------------------------------------------------------------
-# CLI: sanity check
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     NUM_CLASSES = 1232  # kanji N1
@@ -101,7 +80,6 @@ if __name__ == "__main__":
     n_params = count_parameters(model)
     print(f"Parâmetros treináveis: {n_params:,} ({n_params/1e6:.2f}M)")
 
-    # Testa forward pass com input dummy
     print("\nTestando forward pass...")
     dummy = torch.randn(2, 3, 64, 64)  # batch=2, 3 canais, 64x64
     with torch.no_grad():

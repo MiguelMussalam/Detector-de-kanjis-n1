@@ -48,11 +48,6 @@ from src.pipeline.inference import load_detector, _expandir_bbox
 
 OUT_DIR = os.path.join(ROOT_DIR, "data", "real_stats")
 
-
-# ---------------------------------------------------------------------------
-# Amostragem de páginas
-# ---------------------------------------------------------------------------
-
 def listar_paginas(n_paginas: int, seed: int = 42) -> list:
     """
     Junta (volume, caminho_imagem) de todos os volumes disponiveis e sorteia
@@ -74,11 +69,6 @@ def listar_paginas(n_paginas: int, seed: int = 42) -> list:
     rng = random.Random(seed)
     rng.shuffle(todas)
     return todas[:n_paginas]
-
-
-# ---------------------------------------------------------------------------
-# Medições
-# ---------------------------------------------------------------------------
 
 def blur_var(img_gray: np.ndarray) -> float:
     """Variancia do Laplaciano -- metrica padrao de nitidez (maior = mais nitido)."""
@@ -108,11 +98,6 @@ def amostrar_fundo(frame_gray, boxes, patch_size: int, n_tentativas: int, rng: r
         patches.append(frame_gray[y:y + patch_size, x:x + patch_size])
     return patches
 
-
-# ---------------------------------------------------------------------------
-# Contact sheet (grade de imagens pra inspecao visual)
-# ---------------------------------------------------------------------------
-
 def salvar_contact_sheet(imgs: list, path: str, cols: int = 10, cell: int = 64):
     if not imgs:
         print(f"[AVISO] Nada pra salvar em {path}")
@@ -125,11 +110,6 @@ def salvar_contact_sheet(imgs: list, path: str, cols: int = 10, cell: int = 64):
         sheet[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell] = resized
     Image.fromarray(sheet).save(path)
     print(f"[INFO] Contact sheet salvo em: {path}")
-
-
-# ---------------------------------------------------------------------------
-# Loop principal
-# ---------------------------------------------------------------------------
 
 def percentis(valores: list) -> dict:
     arr = np.array(valores)
@@ -206,7 +186,6 @@ def main():
         print("[AVISO] Nenhuma bbox detectada na amostra -- nada pra medir.")
         return
 
-    # --- CSV ---
     with open(os.path.join(OUT_DIR, "tamanhos_bbox.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["volume", "largura", "altura", "blur_var_resized"])
@@ -217,11 +196,9 @@ def main():
         w.writerow(["volume", "media", "desvio"])
         w.writerows(linhas_fundo)
 
-    # --- Contact sheets ---
     salvar_contact_sheet(crops_para_sheet, os.path.join(OUT_DIR, "contato_crops_reais.png"))
     salvar_contact_sheet(fundos_para_sheet, os.path.join(OUT_DIR, "contato_fundos_reais.png"))
 
-    # --- Resumo ---
     larguras = [l for _, l, a, b in linhas_bbox]
     alturas = [a for _, l, a, b in linhas_bbox]
     blurs = [b for _, l, a, b in linhas_bbox]

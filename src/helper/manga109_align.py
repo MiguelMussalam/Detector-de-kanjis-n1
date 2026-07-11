@@ -1,12 +1,19 @@
 """
 manga109_align.py
 ==================
-Gera dado real (crop + rótulo) para fine-tuning do classificador, sem
-anotação manual — deduzindo o rótulo de cada caractere a partir da
-transcrição das falas do Manga109 (<text>) cruzada com as bboxes que o
-NOSSO detector (já treinado) encontra na página inteira.
+Gera negativos REAIS (crop + rótulo OUTROS) para a classe de rejeição do
+classificador, sem anotação manual — deduzindo o rótulo de cada caractere a
+partir da transcrição das falas do Manga109 (<text>) cruzada com as bboxes
+que o NOSSO detector (já treinado) encontra na página inteira.
 
-Método (verificado visualmente antes de rodar em escala — ver conversa):
+Só gera OUTROS, não N1: cobertura real por classe N1 é baixa demais pra
+servir de treino (kanji raro é raro na língua, não só no corpus -- a maioria
+das classes que aparecem tem só 1-3 exemplos), e um erro residual de
+alinhamento ali contaminaria a classe inteira (só tendo 1-3 exemplos, um
+crop mal alinhado pode ser o único "exemplo real" daquela classe). Em
+OUTROS, o mesmo erro é só mais um exemplo entre milhares.
+
+Método (verificado visualmente antes de rodar em escala):
     1. Roda o detector na página inteira (não por linha — recorte isolado
        de uma bbox de fala fica pequeno demais e o detector não acha nada).
     2. Para cada <text> (bbox da fala + string transcrita):
@@ -18,13 +25,11 @@ Método (verificado visualmente antes de rodar em escala — ver conversa):
          japonesa). Bboxes de fala mais largas que altas (texto horizontal)
          são ignoradas — caso raro nesse corpus, não vale a complexidade agora.
        - Zipa bbox_ordenada[i] <-> string_limpa[i].
-    3. Salva o crop (com o mesmo padding usado na inferência real, para bater
-       com o que o classificador vê em produção) em:
-         - data/classifier_real/{train,val}/U+XXXX/  se o caractere é kanji N1
-         - data/classifier_real/{train,val}/OUTROS/  caso contrário (kana,
-           kanji fora do N1, etc — negativos REAIS para a classe de rejeição)
-       Split train/val por VOLUME (ver MANGA109_ALIGN_VAL_VOLUMES), não por
-       crop, para não vazar página de val no treino.
+    3. Descarta caracteres N1, salva o resto em data/classifier_real/{train,val}/OUTROS/
+       (mesmo padding usado na inferência real, para bater com o que o
+       classificador vê em produção). Split train/val por VOLUME (ver
+       MANGA109_ALIGN_VAL_VOLUMES), não por crop, para não vazar página de
+       val no treino.
 
 Uso:
     python -m src.helper.manga109_align                  # todos os volumes
@@ -52,10 +57,6 @@ from config import (
 from src.helper.kanjis import get_kanjis
 from src.pipeline.inference import load_detector, _expandir_bbox
 
-
-# ---------------------------------------------------------------------------
-# Limpeza e alinhamento de uma linha
-# ---------------------------------------------------------------------------
 
 def limpar_string(s: str) -> str:
     return "".join(c for c in (s or "") if c not in MANGA109_ALIGN_PONTUACAO)
@@ -120,7 +121,7 @@ def colunas_sao_confiaveis(colunas: list) -> bool:
     (nº de boxes == nº de caracteres) porque um caractere perdido pelo
     detector é "compensado" por uma caixa espúria em outro lugar da mesma
     linha -- o total bate, mas o zip bbox<->char sai deslocado a partir do
-    ponto do erro. Achados em revisão manual (ver conversa):
+    ponto do erro. Achados em revisão manual dos crops gerados:
 
       1. Coluna isolada de 1 caixa "encaixada" entre colunas bem maiores --
          normalmente é um artefato (pontuação/ruído que o detector caixou
@@ -197,10 +198,6 @@ def alinhar_pagina(frame_bgr, text_elements: list, todos_boxes: list) -> list:
     return pares
 
 
-# ---------------------------------------------------------------------------
-# Processamento de um volume inteiro
-# ---------------------------------------------------------------------------
-
 def processar_volume(nome_volume: str, detector, n1_set: set) -> dict:
     """Processa todas as paginas de um volume. Retorna contagem por categoria."""
     xml_path = os.path.join(MANGA109_ANNOTATIONS, f"{nome_volume}.xml")
@@ -210,7 +207,7 @@ def processar_volume(nome_volume: str, detector, n1_set: set) -> dict:
     eh_val = nome_volume in MANGA109_ALIGN_VAL_VOLUMES
     out_dir = MANGA109_ALIGN_VAL_DIR if eh_val else MANGA109_ALIGN_TRAIN_DIR
 
-    stats = {"n1": 0, "outros": 0, "paginas": 0}
+    stats = {"outros": 0, "paginas": 0}
 
     for page in root.iter("page"):
         idx = int(page.get("index"))
@@ -234,20 +231,17 @@ def processar_volume(nome_volume: str, detector, n1_set: set) -> dict:
 
         frame_rgb = Image.fromarray(frame[:, :, ::-1])
         for i, (box, char) in enumerate(pares):
+            if char in n1_set:
+                continue  # N1 real nao e usado (ver merge_real_data.py)
+
             x1, y1, x2, y2 = box
             xe1, ye1, xe2, ye2 = _expandir_bbox(
                 x1, y1, x2, y2, PIPELINE_BBOX_PADDING, w_frame, h_frame
             )
             crop = frame_rgb.crop((xe1, ye1, xe2, ye2)).convert("L")
+            stats["outros"] += 1
 
-            if char in n1_set:
-                classe_dir = f"U+{ord(char):04X}"
-                stats["n1"] += 1
-            else:
-                classe_dir = CLF_OUTROS_LABEL
-                stats["outros"] += 1
-
-            dest = os.path.join(out_dir, classe_dir)
+            dest = os.path.join(out_dir, CLF_OUTROS_LABEL)
             os.makedirs(dest, exist_ok=True)
             crop.save(os.path.join(dest, f"{nome_volume}_{idx:03d}_{i:03d}.png"))
 
@@ -255,10 +249,6 @@ def processar_volume(nome_volume: str, detector, n1_set: set) -> dict:
 
     return stats
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser()
@@ -278,14 +268,13 @@ def main():
         volumes = volumes[:args.limit_volumes]
 
     print(f"[INFO] Processando {len(volumes)} volumes...")
-    total = {"n1": 0, "outros": 0, "paginas": 0}
+    total = {"outros": 0, "paginas": 0}
     for nome in tqdm(volumes, desc="volumes"):
         stats = processar_volume(nome, detector, n1_set)
         for k in total:
             total[k] += stats[k]
 
     print(f"\n[INFO] Paginas processadas: {total['paginas']}")
-    print(f"[INFO] Crops N1 gerados:    {total['n1']}")
     print(f"[INFO] Crops OUTROS gerados: {total['outros']}")
     print(f"[INFO] Saida em: {MANGA109_ALIGN_TRAIN_DIR} / {MANGA109_ALIGN_VAL_DIR}")
 

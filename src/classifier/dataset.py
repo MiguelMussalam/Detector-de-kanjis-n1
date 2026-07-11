@@ -30,11 +30,6 @@ from config import (
     CLF_OUTROS_LABEL,
 )
 
-
-# ---------------------------------------------------------------------------
-# Transforms
-# ---------------------------------------------------------------------------
-
 def build_transform() -> Callable:
     """
     Transform padrão para os crops sintéticos.
@@ -55,11 +50,6 @@ def build_transform() -> Callable:
         transforms.Normalize(mean=CLF_NORM_MEAN, std=CLF_NORM_STD),
     ])
 
-
-# ---------------------------------------------------------------------------
-# Datasets
-# ---------------------------------------------------------------------------
-
 def build_datasets():
     """
     Retorna (train_ds, val_ds) usando ImageFolder.
@@ -72,7 +62,6 @@ def build_datasets():
     train_ds = ImageFolder(root=CLASSIFIER_TRAIN_DIR, transform=transform)
     val_ds   = ImageFolder(root=CLASSIFIER_VAL_DIR,   transform=transform)
 
-    # Sanity check: mesmas classes nos dois splits
     assert train_ds.classes == val_ds.classes, (
         f"Classes divergem entre train e val:\n"
         f"  train tem {len(train_ds.classes)} classes\n"
@@ -80,11 +69,6 @@ def build_datasets():
     )
 
     return train_ds, val_ds
-
-
-# ---------------------------------------------------------------------------
-# DataLoaders
-# ---------------------------------------------------------------------------
 
 def build_dataloaders(train_ds: ImageFolder, val_ds: ImageFolder,
                       batch_size: Optional[int] = None,
@@ -115,11 +99,6 @@ def build_dataloaders(train_ds: ImageFolder, val_ds: ImageFolder,
 
     return train_loader, val_loader
 
-
-# ---------------------------------------------------------------------------
-# Helper: mapear índice de classe <-> codepoint <-> kanji
-# ---------------------------------------------------------------------------
-
 def index_to_kanji(class_names: list, index: int) -> str:
     """
     Recebe class_names de ImageFolder (lista de nomes de pasta 'U+XXXX', mais a
@@ -143,11 +122,6 @@ def kanji_to_index(class_to_idx: dict, kanji: str) -> int:
     codepoint_str = f"U+{ord(kanji):04X}"
     return class_to_idx[codepoint_str]
 
-
-# ---------------------------------------------------------------------------
-# CLI: sanity check
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     print("Carregando datasets...")
     train_ds, val_ds = build_datasets()
@@ -157,7 +131,6 @@ if __name__ == "__main__":
     print(f"Primeiras 5 classes: {train_ds.classes[:5]}")
     print(f"Primeiro kanji: {index_to_kanji(train_ds.classes, 0)} (classe 0)")
 
-    # Testa carregar uma amostra
     img, label = train_ds[0]
     print(f"\nAmostra 0:")
     print(f"  Shape:  {img.shape}")
@@ -165,7 +138,6 @@ if __name__ == "__main__":
     print(f"  Range:  [{img.min():.3f}, {img.max():.3f}]")
     print(f"  Label:  {label} ({train_ds.classes[label]} = {index_to_kanji(train_ds.classes, label)})")
 
-    # Testa dataloader
     print("\nCriando dataloaders...")
     train_loader, val_loader = build_dataloaders(train_ds, val_ds)
     print(f"Batches treino: {len(train_loader)}")

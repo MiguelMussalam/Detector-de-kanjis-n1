@@ -45,11 +45,6 @@ class Deteccao:
     confianca_det: float  # confianca do detector (YOLO)
     confianca_cls: float  # confianca do classificador (softmax do topo)
 
-
-# ---------------------------------------------------------------------------
-# Carregamento dos modelos
-# ---------------------------------------------------------------------------
-
 def load_detector(weights_path: str = None):
     from ultralytics import YOLO
     weights_path = weights_path or DETECTOR_WEIGHTS_PATH
@@ -84,11 +79,6 @@ def codepoint_to_kanji(codepoint_str: str) -> str:
         return codepoint_str
     return chr(int(codepoint_str.replace("U+", ""), 16))
 
-
-# ---------------------------------------------------------------------------
-# Bbox
-# ---------------------------------------------------------------------------
-
 def _expandir_bbox(x1, y1, x2, y2, margem, largura_max, altura_max):
     """Expande a bbox em `margem` proporcional (ex: 0.10 = +10%), clampeando aos limites do frame."""
     w, h = x2 - x1, y2 - y1
@@ -99,11 +89,6 @@ def _expandir_bbox(x1, y1, x2, y2, margem, largura_max, altura_max):
         min(largura_max, int(x2 + pad_x)),
         min(altura_max, int(y2 + pad_y)),
     )
-
-
-# ---------------------------------------------------------------------------
-# Pipeline
-# ---------------------------------------------------------------------------
 
 class Pipeline:
     """Agrupa detector + classificador já carregados, prontos pra rodar por frame."""

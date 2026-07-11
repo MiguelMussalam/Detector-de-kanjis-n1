@@ -28,11 +28,6 @@ from config import (
 from src.classifier.model import build_model
 from src.classifier.dataset import build_datasets, build_transform
 
-
-# ---------------------------------------------------------------------------
-# Carregamento do modelo
-# ---------------------------------------------------------------------------
-
 def load_classifier(weights_path: str, device: str):
     if not os.path.exists(weights_path):
         raise FileNotFoundError(
@@ -47,11 +42,6 @@ def load_classifier(weights_path: str, device: str):
     model.to(device)
     model.eval()
     return model, classes
-
-
-# ---------------------------------------------------------------------------
-# Avaliação em val sintético
-# ---------------------------------------------------------------------------
 
 @torch.no_grad()
 def eval_synthetic(model, classes, device):
@@ -95,11 +85,6 @@ def eval_synthetic(model, classes, device):
     print(f"Top-5 accuracy: {acc5:.4f} ({acc5*100:.2f}%)")
     return {"top1": acc1, "top5": acc5, "n": total}
 
-
-# ---------------------------------------------------------------------------
-# Avaliação em ETL9
-# ---------------------------------------------------------------------------
-
 @torch.no_grad()
 def eval_etl9(model, classes, device):
     print("\n=== ETL9B filtrado por N1 ===")
@@ -115,7 +100,6 @@ def eval_etl9(model, classes, device):
     print(f"Cobertura ETL9->N1: {stats['n_classes_encontradas']}/{stats['n_classes_target']} classes")
     print(f"Amostras utilizáveis: {stats['n_samples']}")
 
-    # Mapeia kanji -> indice de classe do modelo
     kanji_to_idx = {}
     for i, c in enumerate(classes):
         if c == CLF_OUTROS_LABEL:
@@ -165,11 +149,6 @@ def eval_etl9(model, classes, device):
         print(f"  {kanji} ({ord(kanji):04X}): {n_err} erros")
 
     return {"top1": acc1, "top5": acc5, "n": total, "cobertura": stats}
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser()

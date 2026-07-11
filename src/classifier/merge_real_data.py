@@ -1,14 +1,23 @@
 """
 merge_real_data.py
 ===================
-Mescla os crops reais gerados por manga109_align.py (em data/classifier_real/)
-com o dataset sintético (em data/classifier/), copiando os arquivos para as
-mesmas pastas por classe. O ImageFolder do dataset.py passa a enxergar os dois
-juntos automaticamente, sem nenhuma mudança de código.
+Mescla os crops REAIS de OUTROS gerados por manga109_align.py (em
+data/classifier_real/) com o dataset sintético (em data/classifier/), copiando
+os arquivos para a mesma pasta OUTROS. O ImageFolder do dataset.py passa a
+enxergar os dois juntos automaticamente, sem nenhuma mudança de código.
 
-- Todos os crops N1 reais são copiados (nao ha excesso, ao contrario do OUTROS).
-- OUTROS real e subamostrado (era 40x maior que o N1 real) para nao desbalancear
-  o treino: MANGA109_ALIGN_OUTROS_TRAIN_MAX / _VAL_MAX em config.py.
+Só OUTROS é mesclado -- N1 real foi descartado de propósito:
+  1. Cobertura real por classe é baixa demais pra servir de treino (a maioria
+     das classes que aparecem tem só 1-3 exemplos, kanji raro é raro na
+     língua, não só no corpus).
+  2. Pior: erro residual de alinhamento pode colocar crop de UM kanji na
+     pasta de OUTRO -- numa classe com só 1-3 exemplos reais, isso não é
+     ruído irrelevante, pode ser o único exemplo real ensinando a associação
+     errada. OUTROS não tem esse risco na mesma escala (é um "guarda-chuva"
+     com milhares de caracteres diferentes; um crop mal alinhado ali é só
+     mais um exemplo entre milhares, não domina a classe).
+OUTROS real e subamostrado (era muito maior que o teto desejado) para nao
+desbalancear o treino: OUTROS_TRAIN_MAX / OUTROS_VAL_MAX abaixo.
 
 Uso:
     python -m src.classifier.merge_real_data
@@ -49,28 +58,11 @@ def copiar_classe(src_dir: str, dst_dir: str, limite: int = None, seed: int = SE
 
 
 def main():
-    # --- N1: copia tudo, sem subamostrar ---
-    # Uniao das classes com dado real no treino OU no val (um kanji raro pode
-    # so ter aparecido nos 10 volumes de val e nenhum dos 99 de treino).
-    classes_train = {d for d in os.listdir(MANGA109_ALIGN_TRAIN_DIR) if d.startswith("U+")}
-    classes_val = {d for d in os.listdir(MANGA109_ALIGN_VAL_DIR) if d.startswith("U+")}
-    classes_n1 = sorted(classes_train | classes_val)
-    print(f"[INFO] {len(classes_n1)} classes N1 com dado real "
-          f"({len(classes_train)} no treino, {len(classes_val)} no val)")
+    if not os.path.isdir(MANGA109_ALIGN_TRAIN_DIR):
+        print(f"[AVISO] {MANGA109_ALIGN_TRAIN_DIR} nao existe -- alinhamento nao rodou "
+              f"(ou falhou) antes deste merge. Seguindo so com o dataset sintetico.")
+        return
 
-    total_n1_train = 0
-    total_n1_val = 0
-    for classe in classes_n1:
-        total_n1_train += copiar_classe(
-            os.path.join(MANGA109_ALIGN_TRAIN_DIR, classe),
-            os.path.join(CLASSIFIER_TRAIN_DIR, classe),
-        )
-        total_n1_val += copiar_classe(
-            os.path.join(MANGA109_ALIGN_VAL_DIR, classe),
-            os.path.join(CLASSIFIER_VAL_DIR, classe),
-        )
-
-    # --- OUTROS: subamostra ---
     total_outros_train = copiar_classe(
         os.path.join(MANGA109_ALIGN_TRAIN_DIR, CLF_OUTROS_LABEL),
         os.path.join(CLASSIFIER_TRAIN_DIR, CLF_OUTROS_LABEL),
@@ -82,10 +74,9 @@ def main():
         limite=OUTROS_VAL_MAX,
     )
 
-    print(f"[INFO] N1 real mesclado:     {total_n1_train} treino / {total_n1_val} val")
     print(f"[INFO] OUTROS real mesclado: {total_outros_train} treino / {total_outros_val} val "
           f"(subamostrado de ate {OUTROS_TRAIN_MAX}/{OUTROS_VAL_MAX})")
-    print("[INFO] Merge completo.")
+    print("[INFO] Merge completo (N1 real nao e usado -- ver docstring).")
 
 
 if __name__ == "__main__":

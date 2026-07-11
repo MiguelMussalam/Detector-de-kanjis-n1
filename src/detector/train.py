@@ -21,10 +21,6 @@ Uso (Kaggle notebook):
 import os
 import sys
 
-# ---------------------------------------------------------------------------
-# Deteccao de ambiente
-# ---------------------------------------------------------------------------
-
 IS_KAGGLE = (
     os.path.exists("/kaggle/input") or
     "KAGGLE_DATA_PROXY_TOKEN" in os.environ or
@@ -42,11 +38,6 @@ from config import (
     KAGGLE_WORKERS, LOCAL_WORKERS, PROJECT_NAME,
     YOLO_MODEL, ROOT_DIR,
 )
-
-
-# ---------------------------------------------------------------------------
-# Treino
-# ---------------------------------------------------------------------------
 
 def main():
     from ultralytics import YOLO

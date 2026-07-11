@@ -68,7 +68,6 @@ def main():
     fonte = carregar_fonte_overlay()
     print("[INFO] Pipeline carregado com sucesso!")
 
-    # Configurar captura de tela com mss
     with mss.MSS() as sct:
         monitors = sct.monitors
         if len(monitors) > 1:
@@ -78,7 +77,6 @@ def main():
 
         print(f"[INFO] Monitor detectado: {monitor['width']}x{monitor['height']} em ({monitor['left']}, {monitor['top']})")
 
-        # Configurar regiao inicial de captura de 800x800 centralizada
         width, height = 1920, 1080
         width = min(width, monitor["width"])
         height = min(height, monitor["height"])
@@ -124,7 +122,6 @@ def main():
             img = np.array(screenshot)
             frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
-            # Executar pipeline completo: detector -> crop -> classificador
             deteccoes = pipeline.predict(frame)
             annotated_frame = desenhar_deteccoes(frame, deteccoes, fonte, mostrar_outros)
 

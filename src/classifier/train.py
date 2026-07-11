@@ -37,11 +37,6 @@ IS_KAGGLE = (
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-# ---------------------------------------------------------------------------
-# Uma época (treino ou avaliação)
-# ---------------------------------------------------------------------------
-
 def _run_epoch(model, loader, criterion, optimizer=None):
     """
     Roda uma passada completa pelo loader.
@@ -74,11 +69,6 @@ def _run_epoch(model, loader, criterion, optimizer=None):
             total_samples += imgs.size(0)
 
     return total_loss / total_samples, total_correct / total_samples
-
-
-# ---------------------------------------------------------------------------
-# Loop principal
-# ---------------------------------------------------------------------------
 
 def main():
     print(f"[INFO] Device: {DEVICE}")
