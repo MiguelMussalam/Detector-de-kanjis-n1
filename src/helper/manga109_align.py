@@ -44,6 +44,7 @@ from config import (
     MANGA109_ANNOTATIONS, MANGA109_IMAGES,
     MANGA109_ALIGN_TRAIN_DIR, MANGA109_ALIGN_VAL_DIR, MANGA109_ALIGN_VAL_VOLUMES,
     MANGA109_ALIGN_COLUNA_TOL_FRAC, MANGA109_ALIGN_MAX_COLUNAS, MANGA109_ALIGN_PONTUACAO,
+    MANGA109_ALIGN_COLUNA_ISOLADA_MIN_VIZINHA, MANGA109_ALIGN_GAP_Y_FATOR,
     DETECTOR_WEIGHTS_PATH, PIPELINE_DET_CONF, PIPELINE_DET_IOU, PIPELINE_DET_MAX_DET,
     PIPELINE_BBOX_PADDING,
     CLF_OUTROS_LABEL,
@@ -113,6 +114,46 @@ def ordenar_leitura(boxes: list) -> list:
     return ordenado
 
 
+def colunas_sao_confiaveis(colunas: list) -> bool:
+    """
+    Detecta duas falhas de alinhamento que passam pela checagem de contagem
+    (nº de boxes == nº de caracteres) porque um caractere perdido pelo
+    detector é "compensado" por uma caixa espúria em outro lugar da mesma
+    linha -- o total bate, mas o zip bbox<->char sai deslocado a partir do
+    ponto do erro. Achados em revisão manual (ver conversa):
+
+      1. Coluna isolada de 1 caixa "encaixada" entre colunas bem maiores --
+         normalmente é um artefato (pontuação/ruído que o detector caixou
+         por engano), não uma coluna de texto real.
+      2. Salto de Y anormal dentro de uma coluna -- caracteres vizinhos numa
+         coluna vertical ficam bem colados; um vão muito maior que a altura
+         típica das boxes ali sinaliza um caractere que o detector não achou
+         naquele ponto.
+    """
+    if len(colunas) <= 1:
+        return True  # nada para comparar
+
+    tamanhos = [len(col["boxes"]) for col in colunas]
+    maior = max(tamanhos)
+    for tamanho in tamanhos:
+        if tamanho == 1 and maior >= MANGA109_ALIGN_COLUNA_ISOLADA_MIN_VIZINHA:
+            return False
+
+    for col in colunas:
+        boxes = col["boxes"]
+        if len(boxes) < 2:
+            continue
+        alturas = sorted(b[3] - b[1] for b in boxes)
+        altura_mediana = alturas[len(alturas) // 2]
+        limite_gap = altura_mediana * MANGA109_ALIGN_GAP_Y_FATOR
+        for i in range(1, len(boxes)):
+            gap = boxes[i][1] - boxes[i - 1][3]
+            if gap > limite_gap:
+                return False
+
+    return True
+
+
 def alinhar_pagina(frame_bgr, text_elements: list, todos_boxes: list) -> list:
     """
     Recebe os elementos <text> de uma pagina e os boxes ja detectados
@@ -143,6 +184,9 @@ def alinhar_pagina(frame_bgr, text_elements: list, todos_boxes: list) -> list:
         # linha de 31 caracteres/4+ colunas produziu rotulo errado mesmo com
         # a contagem batendo; uma de 12 caracteres/3 colunas funcionou.
         if len(colunas) > MANGA109_ALIGN_MAX_COLUNAS:
+            continue
+
+        if not colunas_sao_confiaveis(colunas):
             continue
 
         boxes_ordenados = []

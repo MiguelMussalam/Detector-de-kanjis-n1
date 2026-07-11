@@ -343,6 +343,17 @@ MANGA109_ALIGN_COLUNA_TOL_FRAC = _env("KD_ALIGN_COLUNA_TOL_FRAC", 0.5)
 # agrupamento errado) mesmo que a contagem de caracteres bata.
 MANGA109_ALIGN_MAX_COLUNAS = _env("KD_ALIGN_MAX_COLUNAS", 3)
 
+# Duas checagens extras (ver colunas_sao_confiaveis em manga109_align.py),
+# pegam erro de alinhamento que passa pela contagem batendo (caractere
+# perdido pelo detector + caixa espuria em outro lugar da linha cancelam o
+# total, mas o zip bbox<->char sai deslocado a partir do erro):
+#   1. Coluna isolada de 1 caixa entre colunas bem maiores -- normalmente e
+#      um artefato (pontuacao/ruido que o detector caixou por engano).
+#   2. Salto de Y muito maior que a altura tipica das boxes da coluna --
+#      sinaliza um caractere que o detector nao achou naquele ponto.
+MANGA109_ALIGN_COLUNA_ISOLADA_MIN_VIZINHA = _env("KD_ALIGN_COLUNA_ISOLADA_MIN_VIZINHA", 3)
+MANGA109_ALIGN_GAP_Y_FATOR = _env("KD_ALIGN_GAP_Y_FATOR", 1.6)
+
 # Pontuação/símbolos removidos da transcrição antes de comparar contagem
 # (o detector não foi treinado para caixar esses símbolos como "glifo")
 MANGA109_ALIGN_PONTUACAO = "。、！？!?…‼♥「」『』・（）() 　.,"
