@@ -131,9 +131,13 @@ CLASSIFIER_SANITY_COUNT  = _env("KD_CLF_SANITY_COUNT", 20)
 CLASSIFIER_SEED_TRAIN    = _env("KD_CLF_SEED_TRAIN", 42)
 CLASSIFIER_SEED_VAL      = _env("KD_CLF_SEED_VAL", 1337)
 
-# Tamanhos de fonte simulados (multi-scale)
-# Distribuição enviesada pra menores — em manga real kanji pequeno é mais comum
-CLASSIFIER_FONT_SIZES    = [16, 20, 28, 40, 60, 96]
+# Tamanhos de fonte simulados (multi-scale), com pesos de amostragem.
+# Calibrado por medição empírica (ver src/helper/measure_real_stats.py): bbox
+# real de caractere em manga tem mediana ~16-17px e p95 ~29-31px (10730 caixas,
+# 60 páginas do Manga109 via nosso detector). Os tamanhos antigos (40/60/96)
+# representavam detalhe que praticamente nunca ocorre em produção — tirados.
+CLASSIFIER_FONT_SIZES        = [12, 14, 16, 18, 22, 28, 36]
+CLASSIFIER_FONT_SIZE_WEIGHTS = [8, 16, 22, 20, 16, 12, 6]
 
 # Margem em volta do glyph antes do downsample para 64x64
 CLASSIFIER_CANVAS_MARGIN = _env("KD_CLF_CANVAS_MARGIN", 0.15)
@@ -143,17 +147,91 @@ CLF_BG_VALUE_MIN     = _env("KD_CLF_BG_MIN",     245)
 CLF_BG_VALUE_MAX     = _env("KD_CLF_BG_MAX",     255)
 CLF_BG_NOISE_STD     = _env("KD_CLF_BG_NOISE_STD", 2.0)
 
+# Fundo real (patches recortados de páginas do Manga109 sem nenhum glifo por
+# perto — screentone, traço de arte, hachura). Preferido sobre o fundo
+# sintético (papel liso) acima quando disponível; ver
+# src/helper/harvest_backgrounds.py. Cai pro fundo sintético automaticamente
+# se a pasta não existir (ex: ambiente Kaggle sem esse dataset anexado).
+def _buscar_backgrounds_real_dir():
+    """
+    Retorna o diretório com os patches de fundo real (subpastas claro/escuro).
+    No local, 'data/backgrounds_real'. No Kaggle, busca dinamicamente uma
+    pasta anexada como dataset contendo essas duas subpastas -- harvesting
+    roda uma vez localmente (precisa do Manga109 + detector) e o resultado
+    (só imagens pequenas) é reaproveitado via upload, sem precisar reanexar
+    o Manga109 inteiro no notebook do classificador.
+    """
+    caminho_local = os.path.join(DATA_DIR, "backgrounds_real")
+    if os.path.isdir(os.path.join(caminho_local, "claro")) and os.path.isdir(os.path.join(caminho_local, "escuro")):
+        return caminho_local
+
+    kaggle_input = "/kaggle/input"
+    if os.path.exists(kaggle_input):
+        for root, dirs, _ in os.walk(kaggle_input):
+            if "claro" in dirs and "escuro" in dirs:
+                print(f"[INFO] backgrounds_real encontrado no Kaggle: {root}")
+                return root
+    return caminho_local
+
+BACKGROUNDS_REAL_DIR   = _buscar_backgrounds_real_dir()
+CLF_BG_PATCH_SIZE      = _env("KD_CLF_BG_PATCH_SIZE", 72)   # um pouco maior que o input, pra permitir crop aleatorio variado
+CLF_BG_HARVEST_COUNT   = _env("KD_CLF_BG_HARVEST_COUNT", 4000)
+CLF_BG_HARVEST_PAGINAS = _env("KD_CLF_BG_HARVEST_PAGINAS", 800)  # teto de paginas a varrer (fundo escuro e raro, precisa de mais paginas pra encher a cota)
+# Patch precisa estar perto de algum glifo detectado (nao so longe de todos) --
+# senao a amostragem cai em qualquer lugar da pagina (arte do painel, rosto,
+# cabelo), que costuma ser bem mais "carregado" visualmente do que o fundo
+# que realmente fica atras de texto (quase sempre dentro de um balao, quase
+# liso). Limite = multiplo do patch_size.
+CLF_BG_MAX_DIST_FACTOR = _env("KD_CLF_BG_MAX_DIST_FACTOR", 4.0)
+
+# Filtro de "quietude": so aceita o patch se o desvio-padrao dos pixels for
+# baixo -- reduz a variancia geral do pool (menos arte carregada, mais fundo
+# de fato liso/uniforme atras do texto). Esse filtro pega tanto fundo BRANCO
+# quanto fundo PRETO uniforme (alguns paineis de manga sao preto solido com
+# texto branco), ja que os dois tem desvio baixo -- so a media que difere.
+CLF_BG_MAX_STD = _env("KD_CLF_BG_MAX_STD", 25.0)
+
+# Separa o pool em "claro" e "escuro" (media de pixel abaixo do limite = escuro).
+# Fundo escuro é raro no corpus (~poucos %), mas existe (paineis pretos com
+# texto branco pra dar impacto dramatico) e precisa de pool proprio: exige
+# inverter a polaridade do glifo (traço branco, não preto) na composição --
+# ver CLF_BG_ESCURO_PROB em generate_crops.py.
+CLF_BG_DARK_MEAN_THRESHOLD = _env("KD_CLF_BG_DARK_MEAN_THRESHOLD", 80.0)
+CLF_BG_HARVEST_COUNT_ESCURO = _env("KD_CLF_BG_HARVEST_COUNT_ESCURO", 300)
+CLF_BG_ESCURO_PROB = _env("KD_CLF_BG_ESCURO_PROB", 0.08)  # proporcao usada na geracao, nao a natural
+
+# Garantia de legibilidade: depois de aplicar fundo real + blur + ruido, o
+# glifo precisa continuar visivelmente diferente do fundo ao redor (senao a
+# degradacao "esvazia" o caractere e a amostra vira ruido com rotulo errado).
+# Se o contraste cair abaixo do limite, tenta de novo (novo sorteio de
+# fundo/blur/ruido) ate CLF_MAX_TENTATIVAS vezes; se ainda assim falhar,
+# gera uma versao sem blur/ruido pra garantir a legibilidade.
+CLF_MIN_CONTRASTE   = _env("KD_CLF_MIN_CONTRASTE", 70.0)
+CLF_MAX_TENTATIVAS  = _env("KD_CLF_MAX_TENTATIVAS", 6)
+
+# Antes mesmo de degradar: algumas fontes rendem em branco pra um caractere
+# raro (glifo ausente/quebrado naquele tamanho) -- sem checagem, isso vira
+# uma amostra 100% vazia que passa direto (nao tem glifo pra medir contraste
+# contra). Se a fonte sorteada render menos que isso de pixel escuro, troca
+# de fonte antes de seguir pro resto do pipeline.
+CLF_MIN_PIXELS_GLIFO = _env("KD_CLF_MIN_PIXELS_GLIFO", 250)
+
 # Degradações
 CLF_TRANSLATE_PROB   = _env("KD_CLF_TRANSLATE_PROB",   0.7)
 CLF_TRANSLATE_MAX    = _env("KD_CLF_TRANSLATE_MAX",    0.10)
 
-CLF_BLUR_PROB        = _env("KD_CLF_BLUR_PROB",        0.5)
-CLF_BLUR_SIGMA_MIN   = _env("KD_CLF_BLUR_SIGMA_MIN",   0.3)
-CLF_BLUR_SIGMA_MAX   = _env("KD_CLF_BLUR_SIGMA_MAX",   1.0)
+# Blur e ruído calibrados juntos contra a nitidez real medida (variância do
+# Laplaciano, ver src/helper/measure_real_stats.py: mediana real ~210, p95
+# ~940). As duas degradações não são independentes nessa métrica -- ruído
+# pixel-a-pixel infla a variância do Laplaciano quase tanto quanto falta de
+# blur, entao foram achadas em busca conjunta (grid search local), não isoladas.
+CLF_BLUR_PROB        = _env("KD_CLF_BLUR_PROB",        1.0)
+CLF_BLUR_SIGMA_MIN   = _env("KD_CLF_BLUR_SIGMA_MIN",   0.9)
+CLF_BLUR_SIGMA_MAX   = _env("KD_CLF_BLUR_SIGMA_MAX",   1.5)
 
-CLF_NOISE_PROB       = _env("KD_CLF_NOISE_PROB",       0.5)
+CLF_NOISE_PROB       = _env("KD_CLF_NOISE_PROB",       0.7)
 CLF_NOISE_STD_MIN    = _env("KD_CLF_NOISE_STD_MIN",    0.01)
-CLF_NOISE_STD_MAX    = _env("KD_CLF_NOISE_STD_MAX",    0.05)
+CLF_NOISE_STD_MAX    = _env("KD_CLF_NOISE_STD_MAX",    0.03)
 
 CLF_BRIGHTNESS_PROB  = _env("KD_CLF_BRIGHTNESS_PROB",  0.5)
 CLF_BRIGHTNESS_RANGE = _env("KD_CLF_BRIGHTNESS_RANGE", 0.20)

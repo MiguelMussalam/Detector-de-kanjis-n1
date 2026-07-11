@@ -43,8 +43,9 @@ from config import (
     CLASSIFIER_KANJI_LEVEL, CLASSIFIER_INPUT_SIZE,
     CLASSIFIER_SAMPLES_TRAIN, CLASSIFIER_SAMPLES_VAL, CLASSIFIER_SANITY_COUNT,
     CLASSIFIER_SEED_TRAIN, CLASSIFIER_SEED_VAL,
-    CLASSIFIER_FONT_SIZES, CLASSIFIER_CANVAS_MARGIN,
+    CLASSIFIER_FONT_SIZES, CLASSIFIER_FONT_SIZE_WEIGHTS, CLASSIFIER_CANVAS_MARGIN,
     CLF_BG_VALUE_MIN, CLF_BG_VALUE_MAX, CLF_BG_NOISE_STD,
+    BACKGROUNDS_REAL_DIR, CLF_BG_ESCURO_PROB,
     CLF_TRANSLATE_PROB, CLF_TRANSLATE_MAX,
     CLF_BLUR_PROB, CLF_BLUR_SIGMA_MIN, CLF_BLUR_SIGMA_MAX,
     CLF_NOISE_PROB, CLF_NOISE_STD_MIN, CLF_NOISE_STD_MAX,
@@ -55,6 +56,7 @@ from config import (
     CLF_ROTATION_PROB, CLF_ROTATION_MAX,
     CLF_OUTROS_LABEL, CLF_OUTROS_SAMPLES_TRAIN, CLF_OUTROS_SAMPLES_VAL,
     CLF_OUTROS_PROP_KANJI, CLF_OUTROS_PROP_KANA, CLF_OUTROS_PROP_LATIM, CLF_OUTROS_PROP_RUIDO,
+    CLF_MIN_CONTRASTE, CLF_MAX_TENTATIVAS, CLF_MIN_PIXELS_GLIFO,
 )
 from src.helper.kanjis import get_kanjis
 from src.helper.fonts import get_fonts_list
@@ -190,20 +192,68 @@ def apply_jpeg(img: np.ndarray, rng: random.Random) -> np.ndarray:
     return np.array(Image.open(buf))
 
 
+_FUNDOS_REAIS_CACHE = {}
+
+
+def _carregar_fundos_reais(subpasta: str) -> list:
+    """Carrega (uma vez, com cache) os patches de fundo real de uma subpasta (claro/escuro)."""
+    if subpasta not in _FUNDOS_REAIS_CACHE:
+        pasta = os.path.join(BACKGROUNDS_REAL_DIR, subpasta)
+        arquivos = sorted(Path(pasta).glob("*.png")) if os.path.isdir(pasta) else []
+        if not arquivos:
+            print(f"[AVISO] Nenhum fundo real encontrado em '{pasta}' -- caindo para o "
+                  f"fundo sintetico (papel liso). Anexe o dataset de backgrounds_real "
+                  f"(ver src/helper/harvest_backgrounds.py) se essa nao for a intencao.")
+        _FUNDOS_REAIS_CACHE[subpasta] = [
+            np.array(Image.open(f).convert("L")) for f in arquivos
+        ]
+    return _FUNDOS_REAIS_CACHE[subpasta]
+
+
+def _recortar_fundo(bg_full: np.ndarray, h: int, w: int, rng: random.Random) -> np.ndarray:
+    """Recorta um pedaço aleatorio de bg_full do tamanho (h, w) -- o patch harvested
+    é maior que o input de proposito, pra dar variedade mesmo com poucos arquivos."""
+    bh, bw = bg_full.shape
+    if bh >= h and bw >= w:
+        y0 = rng.randint(0, bh - h)
+        x0 = rng.randint(0, bw - w)
+        return bg_full[y0:y0 + h, x0:x0 + w]
+    return np.array(Image.fromarray(bg_full).resize((w, h), resample=Image.BILINEAR))
+
+
 def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
     """
-    Substitui fundo branco puro por fundo de papel: valor levemente amarelado
-    entre CLF_BG_VALUE_MIN e MAX, com ruído gaussiano leve.
-    Areas onde o glyph existe (pixels escuros) são preservadas.
+    Aplica fundo real (recortado do Manga109, ver src/helper/harvest_backgrounds.py)
+    quando o pool estiver disponível; cai para o fundo sintético (papel liso)
+    como fallback (ex: ambiente sem esse dataset coletado ainda).
+
+    Fundo ESCURO exige inverter a polaridade do glyph (traço branco sobre
+    fundo preto) -- do contrário o traço preto original fica invisível sobre
+    o fundo preto. Fundo CLARO usa a mesma lógica de sempre (preserva o traço
+    escuro, preenche o resto com o fundo).
     """
     h, w = img.shape
+
+    usar_escuro = rng.random() < CLF_BG_ESCURO_PROB
+    fundos = _carregar_fundos_reais("escuro" if usar_escuro else "claro")
+
+    if fundos:
+        bg = _recortar_fundo(rng.choice(fundos), h, w, rng)
+        if usar_escuro:
+            img = 255 - img  # inverte: traço vira branco, fundo original (branco) vira preto
+            mask = img < 15
+        else:
+            mask = img > 240
+        out = img.copy()
+        out[mask] = bg[mask]
+        return out
+
+    # --- fallback: papel liso sintético (sem pool de fundo real coletado) ---
     bg_value = rng.uniform(CLF_BG_VALUE_MIN, CLF_BG_VALUE_MAX)
     bg = np.full((h, w), bg_value, dtype=np.float32)
     noise = np.random.normal(0, CLF_BG_NOISE_STD, (h, w))
     bg = np.clip(bg + noise, 0, 255).astype(np.uint8)
-
-    # Mistura: onde img é branco (~255), usa bg; onde tem glyph (escuro), preserva
-    mask = img > 240  # threshold — pixels quase-brancos vão pro fundo
+    mask = img > 240
     out = img.copy()
     out[mask] = bg[mask]
     return out
@@ -213,46 +263,83 @@ def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
 # Pipeline completo de uma amostra
 # ---------------------------------------------------------------------------
 
+def _contraste_glifo(img: np.ndarray, mask_glifo: np.ndarray) -> float:
+    """
+    Diferença média (escala 0-255) entre a região do glifo e o resto da
+    imagem -- proxy barato de legibilidade. Se cair demais, a degradação
+    "esvaziou" o caractere e a amostra virou ruído com o rótulo da classe
+    (pior que não ter a amostra: ensina uma associação errada).
+    """
+    if mask_glifo.sum() == 0 or (~mask_glifo).sum() == 0:
+        return 255.0  # nada pra comparar (glifo saiu inteiro do crop) -- deixa passar
+    fg = img[mask_glifo].astype(np.float32).mean()
+    bg = img[~mask_glifo].astype(np.float32).mean()
+    return abs(fg - bg)
+
+
+def _aplicar_fundo_e_degradacoes(img_base: np.ndarray, rng: random.Random,
+                                 aplicar_blur_ruido: bool = True) -> np.ndarray:
+    """Passos 6-10 (fundo + degradações finais), a partir do glifo já
+    renderizado/posicionado. Separado pra permitir re-sortear só essa parte
+    (ver generate_sample) sem re-sortear fonte/rotação/posição a cada tentativa."""
+    img = apply_paper_background(img_base.copy(), rng)
+    if aplicar_blur_ruido:
+        img = apply_blur(img, rng)
+        img = apply_noise(img, rng)
+    img = apply_brightness_contrast(img, rng)
+    img = apply_jpeg(img, rng)
+    return img
+
+
+def _renderizar_base(char: str, font_path: str, font_size: int,
+                     canvas_margin: float, rng: random.Random, output_size: int) -> np.ndarray:
+    """Passos 1-5: render + morfologia + rotação + translate/crop + resize."""
+    canvas_size = int(font_size * (1 + 2 * canvas_margin))
+    img = render_glyph(char, font_path, font_size, canvas_size)
+    img = apply_morphology(img, rng)
+    img = apply_rotation(img, rng)
+    img = apply_translate_and_crop(img, rng, output_size)
+    return resize_to_target(img, output_size)
+
+
 def generate_sample(char: str, font_path: str, font_size: int,
                     rng: random.Random, output_size: int,
-                    canvas_margin: float) -> np.ndarray:
+                    canvas_margin: float, fonts_fallback: list = None) -> np.ndarray:
     """
     Gera um crop 64x64 do kanji com degradações aplicadas em ordem.
+
+    Duas garantias contra amostra "vazia" (sobra só textura, sem glifo
+    legível -- ver conversa):
+      1. Antes de degradar: algumas fontes rendem em branco pra um
+         caractere raro (glifo ausente/quebrado naquele tamanho). Se a
+         fonte sorteada não desenhar pixel suficiente, tenta outras fontes
+         de `fonts_fallback` antes de seguir.
+      2. Depois de degradar: fundo real + blur + ruído às vezes se
+         combinam de um jeito que apaga o caractere. Mede o contraste entre
+         a região do glifo e o resto; se ficar baixo demais, tenta de novo
+         (novo sorteio de fundo/blur/ruído, mesma fonte/posição). Se esgotar
+         as tentativas, gera uma versão sem blur/ruído -- garante legibilidade.
     """
-    # Canvas maior que o glyph pra dar espaço pras degradações
-    canvas_size = int(font_size * (1 + 2 * canvas_margin))
+    img_base = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size)
+    mask_glifo = img_base <= 240
 
-    # 1. Render limpo
-    img = render_glyph(char, font_path, font_size, canvas_size)
+    if mask_glifo.sum() < CLF_MIN_PIXELS_GLIFO and fonts_fallback:
+        alternativas = [f for f in fonts_fallback if f != font_path]
+        rng.shuffle(alternativas)
+        for alt in alternativas:
+            img_alt = _renderizar_base(char, alt, font_size, canvas_margin, rng, output_size)
+            mask_alt = img_alt <= 240
+            if mask_alt.sum() >= CLF_MIN_PIXELS_GLIFO:
+                img_base, mask_glifo = img_alt, mask_alt
+                break
 
-    # 2. Morfologia
-    img = apply_morphology(img, rng)
+    for _ in range(CLF_MAX_TENTATIVAS):
+        candidato = _aplicar_fundo_e_degradacoes(img_base, rng)
+        if _contraste_glifo(candidato, mask_glifo) >= CLF_MIN_CONTRASTE:
+            return candidato
 
-    # 3. Rotação
-    img = apply_rotation(img, rng)
-
-    # 4. Translate + crop pro tamanho quadrado
-    img = apply_translate_and_crop(img, rng, output_size)
-
-    # 5. Resize pro tamanho final
-    img = resize_to_target(img, output_size)
-
-    # 6. Fundo de papel
-    img = apply_paper_background(img, rng)
-
-    # 7. Blur
-    img = apply_blur(img, rng)
-
-    # 8. Ruído
-    img = apply_noise(img, rng)
-
-    # 9. Contraste/brilho
-    img = apply_brightness_contrast(img, rng)
-
-    # 10. JPEG
-    img = apply_jpeg(img, rng)
-
-    return img
+    # Esgotou as tentativas -- abre mão de blur/ruído pra garantir legibilidade
+    return _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False)
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +366,7 @@ def generate_split(kanjis: list, fonts: list, samples_per_class: int,
 
         for i in range(samples_per_class):
             font_path = rng.choice(fonts)
-            font_size = rng.choice(CLASSIFIER_FONT_SIZES)
+            font_size = rng.choices(CLASSIFIER_FONT_SIZES, weights=CLASSIFIER_FONT_SIZE_WEIGHTS)[0]
             try:
                 img = generate_sample(
                     char=char,
@@ -288,6 +375,7 @@ def generate_split(kanjis: list, fonts: list, samples_per_class: int,
                     rng=rng,
                     output_size=CLASSIFIER_INPUT_SIZE,
                     canvas_margin=CLASSIFIER_CANVAS_MARGIN,
+                    fonts_fallback=fonts,
                 )
                 Image.fromarray(img).save(
                     os.path.join(class_dir, f"{i:03d}.png")
@@ -306,7 +394,7 @@ def generate_sanity(kanjis: list, fonts: list, output_dir: str, count: int, seed
     for i in range(count):
         char = rng.choice(kanjis)
         font_path = rng.choice(fonts)
-        font_size = rng.choice(CLASSIFIER_FONT_SIZES)
+        font_size = rng.choices(CLASSIFIER_FONT_SIZES, weights=CLASSIFIER_FONT_SIZE_WEIGHTS)[0]
         try:
             img = generate_sample(
                 char=char,
@@ -315,6 +403,7 @@ def generate_sanity(kanjis: list, fonts: list, output_dir: str, count: int, seed
                 rng=rng,
                 output_size=CLASSIFIER_INPUT_SIZE,
                 canvas_margin=CLASSIFIER_CANVAS_MARGIN,
+                fonts_fallback=fonts,
             )
             filename = f"{i:03d}_{codepoint_dir(char)}_{os.path.basename(font_path)[:15]}_{font_size}.png"
             Image.fromarray(img).save(os.path.join(output_dir, filename))
@@ -385,7 +474,7 @@ def generate_outros_split(fonts: list, pools: dict, samples: int,
 
     for i, cat in enumerate(tqdm(categorias, desc=f"[{split_name}-outros]")):
         font_path = rng.choice(fonts)
-        font_size = rng.choice(CLASSIFIER_FONT_SIZES)
+        font_size = rng.choices(CLASSIFIER_FONT_SIZES, weights=CLASSIFIER_FONT_SIZE_WEIGHTS)[0]
         try:
             if cat == "ruido":
                 img = generate_noise_sample(rng, CLASSIFIER_INPUT_SIZE)
@@ -395,6 +484,7 @@ def generate_outros_split(fonts: list, pools: dict, samples: int,
                     char=char, font_path=font_path, font_size=font_size,
                     rng=rng, output_size=CLASSIFIER_INPUT_SIZE,
                     canvas_margin=CLASSIFIER_CANVAS_MARGIN,
+                    fonts_fallback=fonts,
                 )
             Image.fromarray(img).save(os.path.join(class_dir, f"{i:04d}.png"))
         except Exception as e:
