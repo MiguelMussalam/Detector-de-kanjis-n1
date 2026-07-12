@@ -85,12 +85,19 @@ CLASSIFIER_SANITY_DIR = os.path.join(CLASSIFIER_DATA_DIR, "sanity")
 CLASSIFIER_KANJI_LEVEL   = _env("KD_CLF_LEVEL", "n1")
 CLASSIFIER_INPUT_SIZE    = _env("KD_CLF_INPUT_SIZE", 64)
 
-CLASSIFIER_SAMPLES_TRAIN = _env("KD_CLF_SAMPLES_TRAIN", 40)
-CLASSIFIER_SAMPLES_VAL   = _env("KD_CLF_SAMPLES_VAL", 10)
+CLASSIFIER_SAMPLES_TRAIN = _env("KD_CLF_SAMPLES_TRAIN", 200)
+CLASSIFIER_SAMPLES_VAL   = _env("KD_CLF_SAMPLES_VAL", 40)
 
 CLF_OUTROS_LABEL          = "OUTROS"
-CLF_OUTROS_SAMPLES_TRAIN  = _env("KD_CLF_OUTROS_SAMPLES_TRAIN", 2000)
-CLF_OUTROS_SAMPLES_VAL    = _env("KD_CLF_OUTROS_SAMPLES_VAL", 500)
+# Rodada 100% sintetica (sem merge de dado real) -- ver conversa: o treino
+# anterior misturou ~91% real no OUTROS contra 0% real no N1, e o modelo
+# aprendeu a distinguir dominio (real vs sintetico) em vez de conteudo. Essa
+# rodada isola a pergunta "a geracao sintetica melhorada ja basta sozinha?"
+# removendo o dado real inteiramente -- por isso o volume sintetico de OUTROS
+# subiu pra ficar numa escala parecida com o que tinhamos antes (era 2000/500
+# sintetico + ate 20000/5000 real).
+CLF_OUTROS_SAMPLES_TRAIN  = _env("KD_CLF_OUTROS_SAMPLES_TRAIN", 20000)
+CLF_OUTROS_SAMPLES_VAL    = _env("KD_CLF_OUTROS_SAMPLES_VAL", 5000)
 
 # Proporção de cada subcategoria dentro do pool "outros" (soma ~1.0)
 CLF_OUTROS_PROP_KANJI = _env("KD_CLF_OUTROS_PROP_KANJI", 0.35)  # kanji fora do N1
@@ -186,6 +193,33 @@ CLF_MAX_TENTATIVAS  = _env("KD_CLF_MAX_TENTATIVAS", 6)
 # contra). Se a fonte sorteada render menos que isso de pixel escuro, troca
 # de fonte antes de seguir pro resto do pipeline.
 CLF_MIN_PIXELS_GLIFO = _env("KD_CLF_MIN_PIXELS_GLIFO", 250)
+
+# Contraste (acima) mede só brilho médio -- fica cego pra dois jeitos de
+# perder legibilidade que passam nele mesmo assim: traços que grudaram numa
+# mancha sólida (fonte pesada + kanji com muitos traços + tamanho pequeno) ou
+# que se desfizeram em fiapos esparsos (erosão/blur agressivo em traço já
+# fino). "Fill ratio" mede a fração de pixel "tinta" dentro do retângulo do
+# próprio glifo -- um kanji legível tem uma faixa saudável, nem quase 0%
+# (erodido) nem perto de 100% (virou blob). Faixa calibrada empiricamente
+# (ver src/classifier/generate_crops.py generate_sanity + CSV de instrumentação).
+CLF_MIN_FILL_RATIO = _env("KD_CLF_MIN_FILL_RATIO", 0.12)
+CLF_MAX_FILL_RATIO = _env("KD_CLF_MAX_FILL_RATIO", 0.75)
+
+# Igual CLF_MAX_TENTATIVAS, mas pro render base (fonte/tamanho/morfologia/
+# rotação/posição) -- essa parte só é sorteada uma vez hoje; se sair ruim
+# (fora da faixa de fill ratio ou pixel insuficiente), precisa re-sortear
+# ANTES de entrar no loop de fundo/blur, senão todo o resto do retry gasta
+# tentativa em cima de um glifo que já nasceu ilegível.
+CLF_MAX_TENTATIVAS_MORFO = _env("KD_CLF_MAX_TENTATIVAS_MORFO", 4)
+
+# Fontes bold/pesadas/decorativas -- achadas na auditoria visual como causa
+# do "vira mancha sólida": kanji com muitos traços grudam quando a fonte já é
+# grossa por design, ainda mais se a morfologia "dilate" (engrossar) for
+# sorteada em cima. Pra essas, só "erode" (afinar) é permitido.
+CLF_FONTES_PESADAS = [
+    "Dela-Gothic-One.ttf", "Reggae-One.ttf", "BIZ-UDPGothic-Bold.ttf",
+    "Stick-Regular.ttf", "Klee-One-SemiBold.ttf",
+]
 
 CLF_TRANSLATE_PROB   = _env("KD_CLF_TRANSLATE_PROB",   0.7)
 CLF_TRANSLATE_MAX    = _env("KD_CLF_TRANSLATE_MAX",    0.10)

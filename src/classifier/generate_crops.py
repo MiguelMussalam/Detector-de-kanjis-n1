@@ -38,6 +38,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from scipy.ndimage import grey_dilation, grey_erosion
 from tqdm import tqdm
 
+# Console do Windows (cp1252) nao imprime kanji direto -- os prints de [WARN]
+# abaixo tem caractere japones no meio da mensagem, sem isso o processo
+# inteiro morre com UnicodeEncodeError no primeiro aviso.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from config import (
     CLASSIFIER_TRAIN_DIR, CLASSIFIER_VAL_DIR, CLASSIFIER_SANITY_DIR,
     CLASSIFIER_KANJI_LEVEL, CLASSIFIER_INPUT_SIZE,
@@ -57,6 +63,7 @@ from config import (
     CLF_OUTROS_LABEL, CLF_OUTROS_SAMPLES_TRAIN, CLF_OUTROS_SAMPLES_VAL,
     CLF_OUTROS_PROP_KANJI, CLF_OUTROS_PROP_KANA, CLF_OUTROS_PROP_LATIM, CLF_OUTROS_PROP_RUIDO,
     CLF_MIN_CONTRASTE, CLF_MAX_TENTATIVAS, CLF_MIN_PIXELS_GLIFO,
+    CLF_MIN_FILL_RATIO, CLF_MAX_FILL_RATIO, CLF_MAX_TENTATIVAS_MORFO, CLF_FONTES_PESADAS,
 )
 from src.helper.kanjis import get_kanjis
 from src.helper.fonts import get_fonts_list
@@ -83,12 +90,20 @@ def render_glyph(char: str, font_path: str, font_size: int,
     return np.array(canvas, dtype=np.uint8)
 
 
-def apply_morphology(img: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Dilate ou erode leve com kernel pequeno."""
+def apply_morphology(img: np.ndarray, rng: random.Random, font_path: str = None) -> np.ndarray:
+    """
+    Dilate ou erode leve com kernel pequeno.
+
+    Fontes bold/pesadas (CLF_FONTES_PESADAS) já são grossas por design --
+    "dilate" (engrossar ainda mais) é o que faz kanji com muitos traços
+    grudarem numa mancha sólida (achado na auditoria visual). Pra essas, só
+    "erode" (afinar) é permitido.
+    """
     if rng.random() > CLF_MORFO_PROB:
         return img
     k = rng.randint(CLF_MORFO_K_MIN, CLF_MORFO_K_MAX)
-    op = rng.choice(["dilate", "erode"])
+    eh_pesada = font_path is not None and os.path.basename(font_path) in CLF_FONTES_PESADAS
+    op = "erode" if eh_pesada else rng.choice(["dilate", "erode"])
     # Glyph é preto (0) sobre branco (255): a operação morfológica "dilate" (que
     # expandiria o preto em imagens normais) precisa ser grey_erosion aqui, e
     # vice-versa -- os nomes das funções do scipy pressupõem primeiro-plano claro.
@@ -247,6 +262,15 @@ def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
     return out
 
 
+def _fg_bg_means(img: np.ndarray, mask_glifo: np.ndarray):
+    """Media de brilho dentro/fora da mascara do glifo, ou None se nao ha o que comparar
+    (mascara vazia ou cobrindo a imagem inteira -- glifo saiu do crop)."""
+    if mask_glifo.sum() == 0 or (~mask_glifo).sum() == 0:
+        return None
+    return (img[mask_glifo].astype(np.float32).mean(),
+            img[~mask_glifo].astype(np.float32).mean())
+
+
 def _contraste_glifo(img: np.ndarray, mask_glifo: np.ndarray) -> float:
     """
     Diferença média (escala 0-255) entre a região do glifo e o resto da
@@ -254,11 +278,44 @@ def _contraste_glifo(img: np.ndarray, mask_glifo: np.ndarray) -> float:
     "esvaziou" o caractere e a amostra virou ruído com o rótulo da classe
     (pior que não ter a amostra: ensina uma associação errada).
     """
-    if mask_glifo.sum() == 0 or (~mask_glifo).sum() == 0:
+    medias = _fg_bg_means(img, mask_glifo)
+    if medias is None:
         return 255.0  # nada pra comparar (glifo saiu inteiro do crop) -- deixa passar
-    fg = img[mask_glifo].astype(np.float32).mean()
-    bg = img[~mask_glifo].astype(np.float32).mean()
+    fg, bg = medias
     return abs(fg - bg)
+
+
+def _fill_ratio_glifo(img: np.ndarray, mask_glifo: np.ndarray) -> float:
+    """
+    Fração de pixel "tinta" dentro do retângulo delimitador do próprio glifo
+    (não do canvas inteiro) -- complementar ao _contraste_glifo, que só mede
+    brilho médio e fica cego pra dois jeitos de perder legibilidade que ainda
+    passam nele: traços que grudaram numa mancha sólida (fill ratio alto
+    demais) ou que se desfizeram em fiapos esparsos (fill ratio baixo demais).
+
+    Usa o ponto médio entre as médias fg/bg (calculadas na hora) como limiar,
+    então funciona igual pro caso de fundo escuro/glifo invertido, sem
+    precisar de caso especial pra polaridade.
+    """
+    linhas = np.where(mask_glifo.any(axis=1))[0]
+    colunas = np.where(mask_glifo.any(axis=0))[0]
+    if linhas.size == 0 or colunas.size == 0:
+        return 0.0
+    medias = _fg_bg_means(img, mask_glifo)
+    if medias is None:
+        return 0.0
+    fg_media, bg_media = medias
+    regiao = img[linhas[0]:linhas[-1] + 1, colunas[0]:colunas[-1] + 1].astype(np.float32)
+    limiar = (fg_media + bg_media) / 2
+    e_tinta = (regiao <= limiar) if fg_media <= bg_media else (regiao >= limiar)
+    return float(e_tinta.mean())
+
+
+def _legivel(img: np.ndarray, mask_glifo: np.ndarray) -> bool:
+    """Combina as duas checagens de legibilidade -- usada tanto no render base
+    quanto na degradação final (ver generate_sample)."""
+    return (mask_glifo.sum() >= CLF_MIN_PIXELS_GLIFO and
+            CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(img, mask_glifo) <= CLF_MAX_FILL_RATIO)
 
 
 def _aplicar_fundo_e_degradacoes(img_base: np.ndarray, rng: random.Random,
@@ -281,7 +338,7 @@ def _renderizar_base(char: str, font_path: str, font_size: int,
     do pipeline pra permitir retry só na parte final, ver generate_sample)."""
     canvas_size = int(font_size * (1 + 2 * canvas_margin))
     img = render_glyph(char, font_path, font_size, canvas_size)
-    img = apply_morphology(img, rng)
+    img = apply_morphology(img, rng, font_path=font_path)
     img = apply_rotation(img, rng)
     img = apply_translate_and_crop(img, rng, output_size)
     return resize_to_target(img, output_size)
@@ -293,37 +350,59 @@ def generate_sample(char: str, font_path: str, font_size: int,
     """
     Gera um crop 64x64 do kanji com degradações aplicadas em ordem.
 
-    Duas garantias contra amostra "vazia" (sobra só textura, sem glifo legível):
-      1. Antes de degradar: algumas fontes rendem em branco pra um
-         caractere raro (glifo ausente/quebrado naquele tamanho). Se a
-         fonte sorteada não desenhar pixel suficiente, tenta outras fontes
-         de `fonts_fallback` antes de seguir.
+    Garantias contra amostra ilegível (sobra só textura, ou virou uma mancha
+    sólida/fiapos esparsos sem estrutura de traço reconhecível):
+      1. Antes de degradar: algumas fontes rendem em branco pra um caractere
+         raro (glifo ausente/quebrado naquele tamanho), ou a combinação de
+         fonte pesada + morfologia + tamanho pequeno gruda os traços numa
+         mancha (ou o oposto, esfarela em fiapos). Re-sorteia geometria
+         (mesma fonte, `CLF_MAX_TENTATIVAS_MORFO` vezes) e, se não resolver,
+         tenta outras fontes de `fonts_fallback` -- essa etapa roda de novo
+         porque a fonte/morfologia só é sorteada uma vez, então nenhuma
+         tentativa da etapa 2 abaixo consegue consertar um render que já
+         nasceu ilegível.
       2. Depois de degradar: fundo real + blur + ruído às vezes se
-         combinam de um jeito que apaga o caractere. Mede o contraste entre
-         a região do glifo e o resto; se ficar baixo demais, tenta de novo
-         (novo sorteio de fundo/blur/ruído, mesma fonte/posição). Se esgotar
-         as tentativas, gera uma versão sem blur/ruído -- garante legibilidade.
+         combinam de um jeito que apaga ou borra demais o caractere. Mede
+         contraste + fill ratio; se ficar fora da faixa, tenta de novo (novo
+         sorteio de fundo/blur/ruído, mesma fonte/posição). Se esgotar as
+         tentativas, gera uma versão sem blur/ruído -- garante legibilidade
+         na grande maioria dos casos (loga aviso no raro caso em que nem
+         isso resolve, sem nunca deixar de emitir uma amostra).
     """
     img_base = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size)
     mask_glifo = img_base <= 240
 
-    if mask_glifo.sum() < CLF_MIN_PIXELS_GLIFO and fonts_fallback:
-        alternativas = [f for f in fonts_fallback if f != font_path]
-        rng.shuffle(alternativas)
-        for alt in alternativas:
-            img_alt = _renderizar_base(char, alt, font_size, canvas_margin, rng, output_size)
-            mask_alt = img_alt <= 240
-            if mask_alt.sum() >= CLF_MIN_PIXELS_GLIFO:
-                img_base, mask_glifo = img_alt, mask_alt
+    if not _legivel(img_base, mask_glifo):
+        for _ in range(CLF_MAX_TENTATIVAS_MORFO):
+            img_try = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size)
+            mask_try = img_try <= 240
+            if _legivel(img_try, mask_try):
+                img_base, mask_glifo = img_try, mask_try
                 break
+        else:
+            if fonts_fallback:
+                alternativas = [f for f in fonts_fallback if f != font_path]
+                rng.shuffle(alternativas)
+                for alt in alternativas:
+                    img_alt = _renderizar_base(char, alt, font_size, canvas_margin, rng, output_size)
+                    mask_alt = img_alt <= 240
+                    if _legivel(img_alt, mask_alt):
+                        img_base, mask_glifo = img_alt, mask_alt
+                        break
 
     for _ in range(CLF_MAX_TENTATIVAS):
         candidato = _aplicar_fundo_e_degradacoes(img_base, rng)
-        if _contraste_glifo(candidato, mask_glifo) >= CLF_MIN_CONTRASTE:
+        if (_contraste_glifo(candidato, mask_glifo) >= CLF_MIN_CONTRASTE and
+                CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(candidato, mask_glifo) <= CLF_MAX_FILL_RATIO):
             return candidato
 
     # Esgotou as tentativas -- abre mão de blur/ruído pra garantir legibilidade
-    return _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False)
+    fallback = _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False)
+    if (_contraste_glifo(fallback, mask_glifo) < CLF_MIN_CONTRASTE or
+            not (CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(fallback, mask_glifo) <= CLF_MAX_FILL_RATIO)):
+        print(f"[WARN] Fora da faixa de legibilidade mesmo apos fallback: "
+              f"{char} / {os.path.basename(font_path)} @ {font_size}px")
+    return fallback
 
 
 def codepoint_dir(char: str) -> str:
