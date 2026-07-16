@@ -245,7 +245,11 @@ CLF_CONTRAST_RANGE   = _env("KD_CLF_CONTRAST_RANGE",   0.20)
 
 CLF_MORFO_PROB       = _env("KD_CLF_MORFO_PROB",       0.3)
 CLF_MORFO_K_MIN      = _env("KD_CLF_MORFO_K_MIN",      2)
-CLF_MORFO_K_MAX      = _env("KD_CLF_MORFO_K_MAX",      3)
+# k=3 auditado (src/helper/filter_audit.py) e caiu no penhasco de acuracia
+# especifico da erosao (92.5% em k=2 -> 40% em k=3, fill_ratio nao separa bem
+# essa faixa) -- k_max travado em 2 (junto com k_min=2, kernel fica fixo em 2
+# quando a morfologia dispara) mantem a amostra dentro do platô seguro.
+CLF_MORFO_K_MAX      = _env("KD_CLF_MORFO_K_MAX",      2)
 
 CLF_JPEG_PROB        = _env("KD_CLF_JPEG_PROB",        0.4)
 CLF_JPEG_QUALITY_MIN = _env("KD_CLF_JPEG_QUALITY_MIN", 30)
@@ -339,3 +343,60 @@ MANGA109_ALIGN_GAP_Y_FATOR = _env("KD_ALIGN_GAP_Y_FATOR", 1.6)
 # Pontuação/símbolos removidos da transcrição antes de comparar contagem
 # (o detector não foi treinado para caixar esses símbolos como "glifo")
 MANGA109_ALIGN_PONTUACAO = "。、！？!?…‼♥「」『』・（）() 　.,"
+
+# Geracao sintetica de paginas pro detector (src/detector/synth_page.py,
+# src/detector/generate_pages.py): ancora glifos sinteticos nas bboxes de
+# linha <text> oficiais do Manga109 (em vez de posicao arbitraria, como o
+# gerador antigo deletado no commit 8292b18 fazia -- aquele arriscava deixar
+# texto real nao rotulado em outro canto do mesmo recorte).
+DETSYN_OUTPUT_DIR = os.path.join(DATA_DIR, "detector_synth")
+
+# Quantas paginas-fonte processar por rodada de geracao.
+DETSYN_N_PAGES = _env("KD_DETSYN_N_PAGES", 300)
+
+# Fracao de celulas que mantem o caractere original da transcricao (preserva
+# padrao realista de repeticao/densidade); o resto vira kanji N1 aleatorio
+# (expoe o detector a variedade das 1232 classes, nao so ao que apareceu nas
+# ~17 paginas reais anotadas). Chute educado inicial, sem calibracao contra
+# dado real (nao existe "proporcao correta" conhecida) -- ajustavel depois
+# via benchmark.
+DETSYN_PROP_ORIGINAL_CHAR = _env("KD_DETSYN_PROP_ORIGINAL_CHAR", 0.3)
+
+# Fracao das paginas-fonte sorteadas que sao paginas SEM nenhum <text> (arte
+# pura) em vez de paginas com linhas sintetizadas -- viram exemplo puramente
+# negativo (label vazio), reforcando que arte/screentone/painel nao deve ser
+# detectado. Nao apaga texto de pagina com <text> e deixa sem rotulo (isso
+# ensinaria o detector a ignorar caractere de verdade) -- so escolhe pagina
+# que ja nao tem nenhum texto anotado pra comecar.
+DETSYN_PROB_PAGINA_SEM_TEXTO = _env("KD_DETSYN_PROB_PAGINA_SEM_TEXTO", 0.1)
+
+# Faixa plausivel de tamanho de celula (lado no eixo de leitura, px) pra
+# confiar na subdivisao geometrica de uma linha em N caracteres iguais.
+# Calibrado com margem em torno do tamanho real medido (measure_real_stats.py:
+# lado mediano ~16-17px, p95 ~29-31px). Fora da faixa, a linha e' tratada
+# como provavel multi-coluna (Manga109 nao da informacao de onde cada coluna
+# comeca) -- tinta apagada, sem tentar adivinhar o layout, sem rotulo.
+DETSYN_CELL_MIN_PX = _env("KD_DETSYN_CELL_MIN_PX", 8.0)
+DETSYN_CELL_MAX_PX = _env("KD_DETSYN_CELL_MAX_PX", 60.0)
+
+# Eixo curto da linha (largura pra texto vertical) nao pode ser maior que
+# este multiplo do tamanho de celula do eixo longo -- acima disso, a linha
+# provavelmente tem mais de uma coluna de caracteres lado a lado dentro da
+# mesma bbox, e dividir por N caracteres nao reflete a geometria real.
+DETSYN_MAX_RAZAO_LARGURA = _env("KD_DETSYN_MAX_RAZAO_LARGURA", 2.2)
+
+# Margem (px) alem da bbox da linha ao apagar a tinta original -- cobre
+# antialiasing/traco que vaza um pouco pra fora da bbox anotada.
+DETSYN_APAGAR_MARGEM_PX = _env("KD_DETSYN_APAGAR_MARGEM_PX", 2)
+
+# Validação full-corpus (src/helper/manga109_corpus.py, src/helper/corpus_validate.py):
+# piso de área de bbox por caractere (não largura/altura isolada -- robusto a
+# linha multi-coluna, onde dividir por um só eixo subestimaria o tamanho real
+# do caractere), parte do filtro automático de transcrição oficial corrompida
+# que substitui a verificação visual manual (inviável em ~10.600 páginas).
+# Calibrado com margem generosa abaixo da área real medida (ver
+# measure_real_stats.py: lado mediano ~16-17px -> área mediana ~270-290).
+# Só existe piso, não teto: um teto foi tentado e descartado após auditoria
+# em 25 volumes (14/19 exclusões eram onomatopeia/título dramático em fonte
+# gigante -- convenção normal de mangá, não sinal de transcrição corrompida).
+CORPUS_CELL_AREA_MIN = _env("KD_CORPUS_CELL_AREA_MIN", 60.0)

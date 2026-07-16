@@ -1,8 +1,8 @@
 """
 benchmark.py
 ============
-Roda o pipeline completo (detector + classificador) na página de referência
-fixa (data/benchmark/pagina_teste.jpg + ground_truth.json) e compara contra
+Roda o pipeline completo (detector + classificador) em cada página de
+referência fixa (data/benchmark/*.jpg + ground_truth.json) e compara contra
 uma verdade fundamental que vem DIRETO da anotação oficial do Manga109 (bbox
 de linha + transcrição), sem depender da nossa própria heurística de
 alinhamento por caractere (`manga109_align.py`) -- essa heurística tem erro
@@ -30,44 +30,71 @@ from src.pipeline.inference import Pipeline
 from src.helper.manga109_align import _dentro
 
 BENCHMARK_DIR = os.path.join(ROOT_DIR, "data", "benchmark")
-IMG_PATH = os.path.join(BENCHMARK_DIR, "pagina_teste.jpg")
 GT_PATH = os.path.join(BENCHMARK_DIR, "ground_truth.json")
+
+
+def avaliar_pagina(deteccoes: list, linhas: list) -> dict:
+    """
+    Compara as deteccoes do pipeline contra as linhas esperadas de UMA pagina.
+    Reaproveitado tanto por este benchmark (paginas curadas) quanto por
+    `src/helper/corpus_validate.py` (validacao full-corpus) -- mesma logica
+    de match, uma so implementacao.
+    """
+    hits, esperado = 0, 0
+    detalhe = []
+    for linha in linhas:
+        x1, y1, x2, y2 = linha["bbox"]
+        marcas = []
+        for char in linha["n1_esperados"]:
+            esperado += 1
+            achou = any(_dentro(d.bbox, x1, y1, x2, y2) and d.kanji == char for d in deteccoes)
+            if achou:
+                hits += 1
+            marcas.append((char, achou))
+        detalhe.append({"bbox": linha["bbox"], "marcas": marcas})
+    return {"hits": hits, "esperado": esperado, "detalhe": detalhe}
 
 
 def main():
     with open(GT_PATH, encoding="utf-8") as f:
         gt = json.load(f)
 
-    frame = cv2.imread(IMG_PATH)
-    if frame is None:
-        raise FileNotFoundError(f"Nao foi possivel ler {IMG_PATH}")
-
     print("[INFO] Carregando pipeline...")
     pipeline = Pipeline()
 
-    print(f"[INFO] Rodando em {IMG_PATH} ({gt['origem']['volume']} pag {gt['origem']['pagina']})...")
-    deteccoes = pipeline.predict(frame)
+    hits_total, esperado_total = 0, 0
+    deteccoes_total, outros_total = 0, 0
 
-    total_outros = sum(1 for d in deteccoes if d.codepoint == "OUTROS")
-    print(f"\n[CONTEXTO] {len(deteccoes)} deteccoes totais na pagina, "
-          f"{total_outros} ({100*total_outros/max(1,len(deteccoes)):.1f}%) classificadas como OUTROS")
+    for pagina in gt["paginas"]:
+        img_path = os.path.join(BENCHMARK_DIR, pagina["imagem"])
+        frame = cv2.imread(img_path)
+        if frame is None:
+            raise FileNotFoundError(f"Nao foi possivel ler {img_path}")
 
-    hits, total = 0, 0
-    print(f"\n[VERDADE FUNDAMENTAL] {len(gt['linhas'])} linhas (anotacao oficial do Manga109):\n")
+        origem = pagina["origem"]
+        print(f"\n[INFO] Rodando em {pagina['imagem']} ({origem['volume']} pag {origem['pagina']})...")
+        deteccoes = pipeline.predict(frame)
 
-    for linha in gt["linhas"]:
-        x1, y1, x2, y2 = linha["bbox"]
-        marcas = []
-        for char in linha["n1_esperados"]:
-            total += 1
-            achou = any(_dentro(d.bbox, x1, y1, x2, y2) and d.kanji == char for d in deteccoes)
-            if achou:
-                hits += 1
-            marcas.append(f"{char}{'✓' if achou else '✗'}")
-        print(f"  bbox={tuple(linha['bbox'])}  esperado: {' '.join(marcas)}")
+        n_outros = sum(1 for d in deteccoes if d.codepoint == "OUTROS")
+        deteccoes_total += len(deteccoes)
+        outros_total += n_outros
+        print(f"  [CONTEXTO] {len(deteccoes)} deteccoes, {n_outros} "
+              f"({100*n_outros/max(1,len(deteccoes)):.1f}%) classificadas como OUTROS")
 
-    print(f"\n[RESUMO] {hits}/{total} kanji N1 esperados encontrados na regiao certa "
-          f"(recall {100*hits/max(1,total):.1f}%)")
+        resultado = avaliar_pagina(deteccoes, pagina["linhas"])
+        for item in resultado["detalhe"]:
+            marcas = " ".join(f"{c}{'✓' if ok else '✗'}" for c, ok in item["marcas"])
+            print(f"    bbox={tuple(item['bbox'])}  esperado: {marcas}")
+
+        print(f"  [PAGINA] {resultado['hits']}/{resultado['esperado']} encontrados "
+              f"(recall {100*resultado['hits']/max(1,resultado['esperado']):.1f}%)")
+        hits_total += resultado["hits"]
+        esperado_total += resultado["esperado"]
+
+    print(f"\n[RESUMO GERAL] {deteccoes_total} deteccoes em {len(gt['paginas'])} paginas, "
+          f"{outros_total} ({100*outros_total/max(1,deteccoes_total):.1f}%) classificadas como OUTROS")
+    print(f"[RESUMO GERAL] {hits_total}/{esperado_total} kanji N1 esperados encontrados na regiao certa "
+          f"(recall {100*hits_total/max(1,esperado_total):.1f}%)")
 
 
 if __name__ == "__main__":

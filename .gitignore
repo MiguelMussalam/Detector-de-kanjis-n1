@@ -6,6 +6,7 @@ kanji_detector/
 kanji_classifier/
 *.pt
 !weights/best.pt
+!weights/classifier_best.pt
 *.zip
 
 # Byte-compiled / optimized / DLL files
