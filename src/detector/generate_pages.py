@@ -135,6 +135,14 @@ def main():
     print("[INFO] Listando paginas candidatas (excluindo volumes de validacao)...")
     com_texto, sem_texto = _listar_paginas_candidatas(seed=args.seed)
     print(f"[INFO] {len(com_texto)} paginas com texto, {len(sem_texto)} sem texto")
+    if not com_texto and not sem_texto:
+        raise FileNotFoundError(
+            f"Nenhum volume/pagina encontrado em MANGA109_ANNOTATIONS={MANGA109_ANNOTATIONS} "
+            f"nem MANGA109_IMAGES={MANGA109_IMAGES}. Confira se o dataset completo do Manga109 "
+            f"(imagens + XML de anotacao <text>, nao so o dataset Roboflow de bbox) esta "
+            f"anexado e se config.py resolveu o diretorio certo (ver print acima/[INFO ou AVISO] "
+            f"'Manga109 dir...' no inicio do log)."
+        )
 
     rng = random.Random(args.seed)
     n_negativas = min(round(args.n_pages * DETSYN_PROB_PAGINA_SEM_TEXTO), len(sem_texto))

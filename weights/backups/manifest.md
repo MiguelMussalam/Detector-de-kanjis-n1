@@ -23,8 +23,9 @@ padrão.
 | Arquivo | Data | Contexto |
 |---|---|---|
 | `detector_2026-07-03.pt` | 2026-07-03 | Checkpoint mais antigo preservado. Contexto não reconstituível com certeza. |
-| `detector_2026-07-09.pt` | 2026-07-09 | Imediatamente anterior ao ativo. Contexto não reconstituível com certeza. |
-| `weights/best.pt` (ativo, não está aqui) | 2026-07-10 | Treinado só com ~17 imagens reais anotadas via Roboflow (`miguelmussalam/manga109-character-bouding-box`), mAP@50 ~0.64. Ainda **não** incorpora o dado sintético de página construído em `src/detector/generate_pages.py` (Parte B) — nunca foi usado num treino de verdade até o momento deste manifest. Ver `EXPERIMENTS.md`. |
+| `detector_2026-07-09.pt` | 2026-07-09 | Imediatamente anterior ao ativo anterior. Contexto não reconstituível com certeza. |
+| `detector_2026-07-10.pt` | 2026-07-10 | Treinado só com ~17 imagens reais anotadas via Roboflow (`miguelmussalam/manga109-character-bouding-box`), mAP@50 ~0.64. Foi o ativo até 2026-07-18, quando o dado sintético de página (grade 2D em `dividir_em_celulas`) entrou no treino de verdade e superou este checkpoint. Ver `EXPERIMENTS.md`. |
+| `weights/best.pt` (ativo, não está aqui) | 2026-07-18 | ~17 imagens reais + 300 páginas sintéticas (`src/detector/generate_pages.py`, grade multi-coluna). mAP@50 0.72-0.74, sem regressão de falso-positivo em página sem `<text>` (ver `detector_fp_check.py`). Ver `EXPERIMENTS.md`. |
 
 ## Por que não apaguei nada
 

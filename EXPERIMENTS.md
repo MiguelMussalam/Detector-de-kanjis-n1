@@ -18,8 +18,5 @@ Convenção: preencher uma linha nova a cada rodada de treino completa (não a c
 
 | Data | Checkpoint | Dado de treino | Resultado | Notas |
 |---|---|---|---|---|
-| 2026-07-10 | `weights/best.pt` (ativo) | ~17 imagens reais anotadas via Roboflow (`miguelmussalam/manga109-character-bouding-box`), sem nenhum dado sintético | mAP@50 ~0.64 (baseline) | Dado sintético de página (`src/detector/generate_pages.py`, ancorado em bbox `<text>` oficial do Manga109) construído e auditado visualmente em lote pequeno, mas **nunca usado num treino de verdade** até o momento deste log. |
-
-### Próxima rodada planejada (não executada ainda)
-- Gerar dataset sintético completo do detector (`python -m src.detector.generate_pages`) e fundir no split de treino (`notebooks/01_detector_train.ipynb`, célula 4.5) — `val` continua 100% real.
-- Comparar `src/helper/detector_fp_check.py` (taxa de detecção em páginas sem `<text>`) antes/depois, pra confirmar que o sintético não ensinou o detector a "detectar qualquer coisa".
+| 2026-07-18 | `weights/best.pt` (ativo) | ~17 imagens reais (Roboflow) + 300 páginas sintéticas (`generate_pages.py`, grade 2D multi-coluna em `dividir_em_celulas` — ver `src/helper/measure_grid_rescue.py`: ~97% das linhas `<text>` do corpus viram aproveitáveis, contra ~25% antes da grade). `val` 100% real. 150 epochs, `yolo26n.pt`, imgsz 1024, batch 8. | **mAP@50 0.72-0.74** (epoch 131 pico 0.738, epoch 150 final 0.721), mAP@50-95 ~0.40-0.41, precision ~0.82-0.84, recall ~0.69 | Melhoria sobre o baseline de 2026-07-10 (mAP@50 ~0.64). `detector_fp_check.py` (150 páginas sem `<text>`, antigo vs novo): 150.9→145.9 detecções/página, 94.0%→94.7% páginas com detecção — **sem sinal de que o sintético ensinou "detectar qualquer coisa"**. Checkpoint antigo preservado em `weights/backups/detector_2026-07-10.pt`. |
+| 2026-07-10 | `weights/backups/detector_2026-07-10.pt` | ~17 imagens reais anotadas via Roboflow (`miguelmussalam/manga109-character-bouding-box`), sem nenhum dado sintético | mAP@50 ~0.64 (baseline) | Superado pela rodada de 2026-07-18. Mantido como backup pra comparação. |

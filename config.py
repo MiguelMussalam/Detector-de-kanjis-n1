@@ -26,8 +26,20 @@ def _buscar_manga109_diretorio():
     """
     Retorna o diretório base do Manga109.
     No local, será 'data/raw/Manga109'.
-    No Kaggle, busca dinamicamente uma pasta contendo 'images' e 'annotations'
-    ou cujo nome contenha 'manga109'.
+    No Kaggle, varre TODA a árvore de /kaggle/input em busca de uma pasta com
+    'images' e 'annotations' juntas (match forte) -- só cai pro match fraco
+    (nome contendo 'manga109' + só uma das duas pastas) se nenhum match forte
+    existir em lugar nenhum.
+
+    Precisa varrer a árvore INTEIRA antes de decidir (não retornar no primeiro
+    achado): datasets Kaggle não relacionados podem ter "manga109" no nome
+    (ex: dataset Roboflow "manga109-character-bouding-box", que tem uma pasta
+    "images" no formato YOLO sem nenhuma relação com o corpus completo) e
+    bater no match fraco por acidente antes da busca alcançar o dataset certo
+    -- bug real desta sessão: o Roboflow "test/images" foi escolhido no lugar
+    do corpus completo (que também estava anexado), gerando 0 páginas
+    sintéticas silenciosamente (generate_pages.py não tinha nenhum XML pra
+    achar em MANGA109_ANNOTATIONS, mas seguiu em frente sem erro).
     """
     caminho_local = os.path.join(DATA_DIR, "raw", "Manga109")
     if os.path.exists(os.path.join(caminho_local, "images")) and os.path.exists(os.path.join(caminho_local, "annotations")):
@@ -35,13 +47,17 @@ def _buscar_manga109_diretorio():
 
     kaggle_input = "/kaggle/input"
     if os.path.exists(kaggle_input):
+        match_parcial = None
         for root, dirs, _ in os.walk(kaggle_input):
             if "images" in dirs and "annotations" in dirs:
                 print(f"[INFO] Manga109 dir encontrado no Kaggle: {root}")
                 return root
-            if "manga109" in root.lower() and ("images" in dirs or "annotations" in dirs):
-                print(f"[INFO] Manga109 dir parcial encontrado no Kaggle: {root}")
-                return root
+            if match_parcial is None and "manga109" in root.lower() and ("images" in dirs or "annotations" in dirs):
+                match_parcial = root
+        if match_parcial is not None:
+            print(f"[AVISO] Nenhuma pasta com 'images' e 'annotations' juntas encontrada -- "
+                  f"usando match fraco (nome parcial, pode ser o dataset errado): {match_parcial}")
+            return match_parcial
     return caminho_local
 
 MANGA109_DIR = _buscar_manga109_diretorio()
