@@ -132,7 +132,13 @@ CLASSIFIER_SEED_VAL      = _env("KD_CLF_SEED_VAL", 1337)
 # 60 páginas do Manga109 via nosso detector). Os tamanhos antigos (40/60/96)
 # representavam detalhe que praticamente nunca ocorre em produção — tirados.
 CLASSIFIER_FONT_SIZES        = [12, 14, 16, 18, 22, 28, 36]
-CLASSIFIER_FONT_SIZE_WEIGHTS = [8, 16, 22, 20, 16, 12, 6]
+# 14px pesava 16 originalmente -- auditoria de sanity (200 amostras) achou
+# WARN de ilegibilidade residual (ver generate_sample) concentrado 2.5x acima
+# do esperado nesse tamanho especificamente (40% dos WARN vs 16% da amostragem
+# total), puxado por kanji de muitos traços que nao cabem legiveis em 14px em
+# nenhuma fonte -- baixado pra 6 (nivel de 36px), peso redistribuido pra
+# 16/18px (ja os tamanhos mais confiaveis).
+CLASSIFIER_FONT_SIZE_WEIGHTS = [8, 6, 28, 24, 16, 12, 6]
 
 # Margem em volta do glyph antes do downsample para 64x64
 CLASSIFIER_CANVAS_MARGIN = _env("KD_CLF_CANVAS_MARGIN", 0.15)
