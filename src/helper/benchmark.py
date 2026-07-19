@@ -39,20 +39,45 @@ def avaliar_pagina(deteccoes: list, linhas: list) -> dict:
     Reaproveitado tanto por este benchmark (paginas curadas) quanto por
     `src/helper/corpus_validate.py` (validacao full-corpus) -- mesma logica
     de match, uma so implementacao.
+
+    Alem de hit/miss, atribui cada miss a detector ou classificador: conta
+    quantas deteccoes (de QUALQUER classe) caem na regiao da linha -- se ainda
+    sobra alguma "candidata" nao usada quando um kanji esperado nao bate,
+    o detector achou uma caixa ali e o classificador que errou/rejeitou;
+    se nao sobra nenhuma, o detector nunca gerou caixa nenhuma pra aquele
+    caractere. E uma heuristica (Manga109 nao da posicao por caractere, so
+    por linha, entao nao da pra saber qual caixa "deveria" ser qual char),
+    nao uma atribuicao exata.
     """
     hits, esperado = 0, 0
+    miss_detector, miss_classificador = 0, 0
     detalhe = []
     for linha in linhas:
         x1, y1, x2, y2 = linha["bbox"]
+        deteccoes_na_regiao = [d for d in deteccoes if _dentro(d.bbox, x1, y1, x2, y2)]
+        candidatas_sobrando = len(deteccoes_na_regiao)
+
         marcas = []
         for char in linha["n1_esperados"]:
             esperado += 1
-            achou = any(_dentro(d.bbox, x1, y1, x2, y2) and d.kanji == char for d in deteccoes)
+            achou = any(d.kanji == char for d in deteccoes_na_regiao)
             if achou:
                 hits += 1
-            marcas.append((char, achou))
+                candidatas_sobrando -= 1
+                marcas.append((char, True, None))
+            elif candidatas_sobrando > 0:
+                miss_classificador += 1
+                candidatas_sobrando -= 1
+                marcas.append((char, False, "classificador"))
+            else:
+                miss_detector += 1
+                marcas.append((char, False, "detector"))
         detalhe.append({"bbox": linha["bbox"], "marcas": marcas})
-    return {"hits": hits, "esperado": esperado, "detalhe": detalhe}
+    return {
+        "hits": hits, "esperado": esperado,
+        "miss_detector": miss_detector, "miss_classificador": miss_classificador,
+        "detalhe": detalhe,
+    }
 
 
 def main():

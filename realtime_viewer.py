@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import time
@@ -8,8 +9,12 @@ import cv2
 import mss
 from PIL import Image, ImageDraw, ImageFont
 
-from src.pipeline.inference import Pipeline
-from config import FONTS_DIR, PIPELINE_CLS_CONF_LOW, CLF_OUTROS_LABEL
+from src.pipeline.inference import Pipeline, Deteccao, load_detector
+from config import (
+    FONTS_DIR, PIPELINE_CLS_CONF_LOW, CLF_OUTROS_LABEL,
+    DETECTOR_WEIGHTS_PATH, PIPELINE_DET_CONF, PIPELINE_DET_IOU,
+    PIPELINE_DET_MAX_DET, PIPELINE_MIN_BBOX_HEIGHT,
+)
 
 
 def carregar_fonte_overlay(tamanho=18):
@@ -20,6 +25,43 @@ def carregar_fonte_overlay(tamanho=18):
             "Nenhuma fonte encontrada em assets/fonts/. Rode `python -m src.helper.fonts` primeiro."
         )
     return ImageFont.truetype(candidatos[0], tamanho)
+
+
+def detectar_somente(detector, frame_bgr,
+                     conf_det: float = PIPELINE_DET_CONF,
+                     iou_det: float = PIPELINE_DET_IOU) -> list:
+    """
+    Roda só o detector (sem classificador) -- usado no modo --detector-only pra
+    isolar visualmente a cobertura do detector (onde ele acha/nao acha caixa),
+    sem o classificador misturado no julgamento visual.
+    """
+    results = detector(
+        frame_bgr, conf=conf_det, iou=iou_det,
+        agnostic_nms=True, max_det=PIPELINE_DET_MAX_DET, verbose=False,
+    )[0]
+
+    deteccoes = []
+    for box in results.boxes:
+        x1, y1, x2, y2 = box.xyxy[0].tolist()
+        if (y2 - y1) < PIPELINE_MIN_BBOX_HEIGHT:
+            continue
+        deteccoes.append(Deteccao(
+            bbox=(int(x1), int(y1), int(x2), int(y2)),
+            kanji="", codepoint="",
+            confianca_det=float(box.conf[0]), confianca_cls=0.0,
+        ))
+    return deteccoes
+
+
+def desenhar_deteccoes_detector(frame_bgr, deteccoes):
+    """So desenha bbox + confianca do detector -- sem kanji, nao ha classificador nesse modo."""
+    frame = frame_bgr.copy()
+    for det in deteccoes:
+        x1, y1, x2, y2 = det.bbox
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        cv2.putText(frame, f"{det.confianca_det:.2f}", (x1, max(0, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+    return frame
 
 
 def desenhar_deteccoes(frame_bgr, deteccoes, fonte, mostrar_outros=False):
@@ -55,18 +97,36 @@ def desenhar_deteccoes(frame_bgr, deteccoes, fonte, mostrar_outros=False):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--detector-only", action="store_true",
+                        help="Roda so o detector (sem classificador) -- mostra so bbox + confianca de deteccao, "
+                             "util pra isolar visualmente a cobertura do detector.")
+    args = parser.parse_args()
+
+    modo_detector_only = args.detector_only
+    titulo_modo = "Detector (sem classificador)" if modo_detector_only else "Pipeline Completo (Detector + Classificador N1)"
+
     print("=" * 60)
-    print("   Pipeline Completo (Detector + Classificador N1) - Real-Time   ")
+    print(f"   {titulo_modo} - Real-Time   ")
     print("=" * 60)
 
-    print("[INFO] Carregando pipeline (detector + classificador)...")
+    fonte = None
+    detector = None
+    pipeline = None
+
     try:
-        pipeline = Pipeline()
+        if modo_detector_only:
+            print("[INFO] Carregando detector...")
+            detector = load_detector(DETECTOR_WEIGHTS_PATH)
+            print("[INFO] Detector carregado com sucesso!")
+        else:
+            print("[INFO] Carregando pipeline (detector + classificador)...")
+            pipeline = Pipeline()
+            fonte = carregar_fonte_overlay()
+            print("[INFO] Pipeline carregado com sucesso!")
     except FileNotFoundError as e:
         print(f"[ERROR] {e}")
         sys.exit(1)
-    fonte = carregar_fonte_overlay()
-    print("[INFO] Pipeline carregado com sucesso!")
 
     with mss.MSS() as sct:
         monitors = sct.monitors
@@ -103,14 +163,16 @@ def main():
         print("  - [W, A, S, D] : Mover a regiao de captura (Cima, Esquerda, Baixo, Direita)")
         print("  - [R]          : Aumentar tamanho da janela de captura (+50px)")
         print("  - [F]          : Diminuir tamanho da janela de captura (-50px)")
-        print("  - [O]          : Mostrar/esconder deteccoes classificadas como OUTROS")
+        if not modo_detector_only:
+            print("  - [O]          : Mostrar/esconder deteccoes classificadas como OUTROS")
         print("  - [H]          : Imprimir informacoes de depuracao no terminal")
         print("  - [Q]          : Sair do visualizador")
         print("-" * 60)
 
         prev_time = time.time()
         mostrar_outros = False
-        print(f"[INFO] Exibindo OUTROS: {mostrar_outros} (pressione [O] para alternar)")
+        if not modo_detector_only:
+            print(f"[INFO] Exibindo OUTROS: {mostrar_outros} (pressione [O] para alternar)")
 
         while True:
             try:
@@ -122,8 +184,12 @@ def main():
             img = np.array(screenshot)
             frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
-            deteccoes = pipeline.predict(frame)
-            annotated_frame = desenhar_deteccoes(frame, deteccoes, fonte, mostrar_outros)
+            if modo_detector_only:
+                deteccoes = detectar_somente(detector, frame)
+                annotated_frame = desenhar_deteccoes_detector(frame, deteccoes)
+            else:
+                deteccoes = pipeline.predict(frame)
+                annotated_frame = desenhar_deteccoes(frame, deteccoes, fonte, mostrar_outros)
 
             curr_time = time.time()
             fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0.0
@@ -131,7 +197,7 @@ def main():
 
             cv2.putText(
                 annotated_frame,
-                f"FPS: {fps:.1f} | Regiao: {region['width']}x{region['height']} | Deteccoes: {len(deteccoes)}",
+                f"[{titulo_modo}] FPS: {fps:.1f} | Regiao: {region['width']}x{region['height']} | Deteccoes: {len(deteccoes)}",
                 (15, 35),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
@@ -181,14 +247,18 @@ def main():
                 region["left"] += 25
                 region["top"] += 25
                 clip_region(region)
-            elif key == ord('o'):
+            elif key == ord('o') and not modo_detector_only:
                 mostrar_outros = not mostrar_outros
                 print(f"[INFO] Exibindo OUTROS: {mostrar_outros}")
             elif key == ord('h'):
                 print(f"[DEBUG] Regiao de Captura: Top={region['top']}, Left={region['left']}, Lg={region['width']}, Al={region['height']}")
                 print(f"[DEBUG] {len(deteccoes)} deteccoes no frame atual:")
-                for det in deteccoes:
-                    print(f"    {det.kanji} ({det.codepoint}) det={det.confianca_det:.2f} cls={det.confianca_cls:.2f}")
+                if modo_detector_only:
+                    for det in deteccoes:
+                        print(f"    bbox={det.bbox} det={det.confianca_det:.2f}")
+                else:
+                    for det in deteccoes:
+                        print(f"    {det.kanji} ({det.codepoint}) det={det.confianca_det:.2f} cls={det.confianca_cls:.2f}")
 
         cv2.destroyAllWindows()
 

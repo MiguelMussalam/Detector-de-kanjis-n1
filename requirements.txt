@@ -12,4 +12,5 @@ torch
 torchvision
 jaconv
 bitstring
+pytest
 https://github.com/CaptainDario/ETLCDB_data_reader/releases/download/v2.1.4/etl_data_reader_CaptainDario-2.1.4-py3-none-any.whl

@@ -8,12 +8,18 @@ arbitrárias da página sem checar contra a anotação oficial, arriscando deixa
 texto real não rotulado em outro canto do mesmo recorte.
 
 Para cada <text> de uma página:
-  1. Subdivide a bbox em N células iguais (N = número de caracteres) -- só
-     quando a geometria (tamanho de célula + razão de largura) é plausível
-     pra coluna/linha única (ver DETSYN_CELL_*/DETSYN_MAX_RAZAO_LARGURA em
-     config.py). Manga109 não diz onde cada coluna começa dentro de uma
-     bbox multi-coluna, então essas linhas são só apagadas, sem rótulo --
-     nunca se tenta adivinhar o layout.
+  1. Estima uma grade C colunas (ou linhas, se horizontal) x N/C caracteres
+     por coluna que encaixe os N caracteres da transcrição em células ~
+     quadradas plausíveis (ver DETSYN_CELL_*/DETSYN_MAX_RAZAO_LARGURA em
+     config.py e _estimar_grade). C=1 cobre o caso de coluna única (maioria
+     das linhas curtas); C>1 cobre bbox com múltiplas colunas de texto lado
+     a lado (comum em balão de fala) -- Manga109 não diz onde cada coluna
+     ORIGINAL começava, mas isso não importa aqui: a tinta original inteira
+     é apagada e o conteúdo novo é nosso, então o grid é uma escolha nossa,
+     não uma tentativa de recuperar o layout real. Só quando nem o melhor
+     grid encontrado cabe na faixa de tamanho plausível é que a linha é
+     tratada como geometria degenerada (ver measure_grid_rescue.py: ~97% do
+     corpus passa a ser aproveitável com essa extensão, contra ~25% antes).
   2. Apaga a tinta original de cada célula usada (cv2.inpaint, cor de tinta
      amostrada da própria região) e desenha um glifo sintético novo,
      reaproveitando as primitivas de render/degradação já maduras de
@@ -28,6 +34,7 @@ tinta real sem caixa, que ensinaria o detector a ignorar caracteres de
 verdade.
 """
 
+import math
 import random
 
 import cv2
@@ -52,31 +59,102 @@ def bbox_para_yolo(bbox, img_w, img_h):
     return cx, cy, w, h
 
 
+def _estimar_grade(n_chars: int, eixo_leitura: float, eixo_perp: float):
+    """
+    Estima (grupos, por_grupo) assumindo células ~quadradas: grupos = nº de
+    colunas (linha vertical) ou linhas (linha horizontal) lado a lado dentro
+    da bbox; por_grupo = caracteres por grupo. grupos=1 é o caso de coluna/
+    linha única (maioria); grupos>1 cobre bbox multi-coluna.
+
+    Derivação: células quadradas implicam eixo_leitura/por_grupo ≈
+    eixo_perp/grupos, combinado com grupos*por_grupo ≈ n_chars, dá
+    grupos ≈ sqrt(n_chars * eixo_perp/eixo_leitura). Corrige o
+    arredondamento pra nunca deixar o último grupo vazio (ex: n=9 arredondado
+    pra 4 grupos daria por_grupo=3 e um 4º grupo sem nenhum caractere --
+    recalcular grupos=ceil(n_chars/por_grupo) resolve).
+    """
+    if n_chars <= 0 or eixo_leitura <= 0 or eixo_perp <= 0:
+        return None
+    grupos_raw = math.sqrt(n_chars * eixo_perp / eixo_leitura)
+    grupos = min(max(1, int(grupos_raw + 0.5)), n_chars)  # arredonda p/ cima em .5 (nao bankers rounding)
+    por_grupo = math.ceil(n_chars / grupos)
+    grupos = math.ceil(n_chars / por_grupo)  # corrige grupo vazio no final
+    return grupos, por_grupo
+
+
+def _montar_celulas_grade(bbox, vertical: bool, grupos: int, por_grupo: int, n_chars: int):
+    """
+    Monta as células do grid em ordem de leitura japonesa: coluna mais à
+    direita primeiro, topo->baixo dentro da coluna (vertical); linha de cima
+    primeiro, esquerda->direita (horizontal). A ordem não precisa reconstruir
+    a posição real de nenhum caractere original (Manga109 não informa isso
+    dentro de uma bbox multi-coluna) -- só precisa parecer natural na
+    auditoria visual, já que o conteúdo desenhado em cada célula é nosso.
+    """
+    x1, y1, x2, y2 = bbox
+    largura, altura = x2 - x1, y2 - y1
+    celulas = []
+    if vertical:
+        cell_w, cell_h = largura / grupos, altura / por_grupo
+        for leitura_col in range(grupos):
+            col_pixel = grupos - 1 - leitura_col  # 0 = coluna mais a direita
+            cx1, cx2 = x1 + col_pixel * cell_w, x1 + (col_pixel + 1) * cell_w
+            n_nesta_col = por_grupo if leitura_col < grupos - 1 else n_chars - (grupos - 1) * por_grupo
+            for row in range(n_nesta_col):
+                celulas.append((cx1, y1 + row * cell_h, cx2, y1 + (row + 1) * cell_h))
+    else:
+        cell_w, cell_h = largura / por_grupo, altura / grupos
+        for row in range(grupos):
+            cy1, cy2 = y1 + row * cell_h, y1 + (row + 1) * cell_h
+            n_nesta_linha = por_grupo if row < grupos - 1 else n_chars - (grupos - 1) * por_grupo
+            for col in range(n_nesta_linha):
+                celulas.append((x1 + col * cell_w, cy1, x1 + (col + 1) * cell_w, cy2))
+    return celulas
+
+
 def dividir_em_celulas(bbox, n_chars: int):
     """
-    Divide a bbox em n_chars células iguais ao longo do eixo de leitura.
-    Retorna lista de bbox (uma por célula) ou None se a geometria não for
-    plausível pra coluna/linha única.
+    Divide a bbox em n_chars células ao longo do eixo de leitura, estimando
+    quantas colunas (ou linhas) lado a lado fazem sentido pra geometria da
+    bbox (ver _estimar_grade) -- cobre tanto coluna única (grupos=1) quanto
+    bbox multi-coluna (grupos>1, comum em balão de fala). Retorna lista de
+    bbox (uma por célula, em ordem de leitura) ou None se nem o melhor grid
+    encontrado tiver tamanho de célula plausível (geometria degenerada).
     """
     x1, y1, x2, y2 = bbox
     largura, altura = x2 - x1, y2 - y1
     vertical = altura >= largura
 
-    lado_celula = (altura if vertical else largura) / n_chars
-    outro_lado = largura if vertical else altura
+    eixo_leitura = altura if vertical else largura
+    eixo_perp = largura if vertical else altura
 
+    grade = _estimar_grade(n_chars, eixo_leitura, eixo_perp)
+    if grade is None:
+        return None
+    grupos, por_grupo = grade
+
+    lado_celula = eixo_leitura / por_grupo
+    cell_perp = eixo_perp / grupos
     if not (DETSYN_CELL_MIN_PX <= lado_celula <= DETSYN_CELL_MAX_PX):
         return None
-    if outro_lado > lado_celula * DETSYN_MAX_RAZAO_LARGURA:
-        return None  # provavel multi-coluna -- Manga109 nao diz onde cada uma comeca
 
-    celulas = []
-    for i in range(n_chars):
-        if vertical:
-            celulas.append((x1, y1 + i * lado_celula, x2, y1 + (i + 1) * lado_celula))
-        else:
-            celulas.append((x1 + i * lado_celula, y1, x1 + (i + 1) * lado_celula, y2))
-    return celulas
+    if grupos == 1:
+        # Caso de coluna/linha unica -- checagem e loop identicos aos de
+        # antes da grade 2D, sem risco de drift de ponto flutuante.
+        if cell_perp > lado_celula * DETSYN_MAX_RAZAO_LARGURA:
+            return None  # geometria nao confiavel nem pra coluna unica
+        celulas = []
+        for i in range(n_chars):
+            if vertical:
+                celulas.append((x1, y1 + i * lado_celula, x2, y1 + (i + 1) * lado_celula))
+            else:
+                celulas.append((x1 + i * lado_celula, y1, x1 + (i + 1) * lado_celula, y2))
+        return celulas
+
+    if not (DETSYN_CELL_MIN_PX <= cell_perp <= DETSYN_CELL_MAX_PX):
+        return None  # nem o grid multi-coluna estimado cabe numa faixa plausivel
+
+    return _montar_celulas_grade(bbox, vertical, grupos, por_grupo, n_chars)
 
 
 def _mascara_e_cor_tinta(regiao_gray: np.ndarray):
@@ -101,9 +179,10 @@ def apagar_linha(frame_gray: np.ndarray, bbox):
     (frame_atualizado, cor_tinta_amostrada) -- cor usada pro glifo novo.
 
     Roda pra TODA linha <text>, mesmo quando dividir_em_celulas() depois
-    rejeita a geometria (multi-coluna) e nenhum glifo novo e' desenhado ali --
-    e' isso que garante a invariante "nunca sobra tinta real legivel sem
-    caixa". Em blocos densos multi-linha o inpaint nao produz papel limpo,
+    rejeita a geometria (degenerada demais nem pra grade multi-coluna) e
+    nenhum glifo novo e' desenhado ali -- e' isso que garante a invariante
+    "nunca sobra tinta real legivel sem caixa". Em blocos densos multi-linha
+    o inpaint nao produz papel limpo,
     vira uma textura pontilhada/borrada (auditado visualmente) -- pior
     esteticamente que um fundo liso, mas ainda assim ilegivel como texto, o
     que preserva a invariante (nao ensina o detector a ignorar caractere real
@@ -176,8 +255,9 @@ def processar_pagina_para_synth(frame_bgr: np.ndarray, text_elements: list,
                                  n1_kanjis: list, fonts: list, rng: random.Random):
     """
     Processa uma página inteira: para cada <text>, tenta subdividir em
-    células e substituir por glifos sintéticos; se a geometria não permitir
-    (linha multi-coluna), só apaga a tinta, sem rótulo. Retorna
+    células (coluna única ou grade multi-coluna, ver dividir_em_celulas) e
+    substituir por glifos sintéticos; se nem a melhor grade encontrada tiver
+    geometria plausível, só apaga a tinta, sem rótulo. Retorna
     (frame_resultado_bgr, lista_de_bboxes_absolutas_x1y1x2y2).
     """
     frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)

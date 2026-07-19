@@ -379,10 +379,12 @@ DETSYN_PROB_PAGINA_SEM_TEXTO = _env("KD_DETSYN_PROB_PAGINA_SEM_TEXTO", 0.1)
 DETSYN_CELL_MIN_PX = _env("KD_DETSYN_CELL_MIN_PX", 8.0)
 DETSYN_CELL_MAX_PX = _env("KD_DETSYN_CELL_MAX_PX", 60.0)
 
-# Eixo curto da linha (largura pra texto vertical) nao pode ser maior que
-# este multiplo do tamanho de celula do eixo longo -- acima disso, a linha
-# provavelmente tem mais de uma coluna de caracteres lado a lado dentro da
-# mesma bbox, e dividir por N caracteres nao reflete a geometria real.
+# So usado no fallback de coluna/linha UNICA (grupos=1) de dividir_em_celulas
+# (src/detector/synth_page.py): eixo curto nao pode ser maior que este
+# multiplo do tamanho de celula do eixo longo -- acima disso, nem a estimativa
+# de grade multi-coluna achou um grid plausivel, entao a geometria e tratada
+# como degenerada de verdade (nao so "provavel multi-coluna", que a grade 2D
+# ja cobre separadamente).
 DETSYN_MAX_RAZAO_LARGURA = _env("KD_DETSYN_MAX_RAZAO_LARGURA", 2.2)
 
 # Margem (px) alem da bbox da linha ao apagar a tinta original -- cobre
