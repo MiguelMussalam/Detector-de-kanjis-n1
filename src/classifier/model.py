@@ -16,17 +16,26 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-from config import CLF_MODEL_ARCH, CLF_PRETRAINED
+from config import CLF_MODEL_ARCH, CLF_PRETRAINED, CLF_STEM_LEVE
 
-def _build_resnet18(num_classes: int, pretrained: bool) -> nn.Module:
+def _build_resnet18(num_classes: int, pretrained: bool, stem_leve: bool = False) -> nn.Module:
     weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
     model = models.resnet18(weights=weights)
+
+    if stem_leve:
+        # So muda o stride do conv1 (mesmo kernel/pesos pre-treinados, so a
+        # config de forward muda) e troca o maxpool por Identity -- ver
+        # CLF_STEM_LEVE em config.py pro raciocinio completo. Mapa antes do
+        # avgpool passa de 2x2 pra 8x8 (entrada 64x64).
+        model.conv1.stride = (1, 1)
+        model.maxpool = nn.Identity()
+
     in_features = model.fc.in_features
     model.fc = nn.Linear(in_features, num_classes)
     return model
 
 
-def _build_efficientnet_b0(num_classes: int, pretrained: bool) -> nn.Module:
+def _build_efficientnet_b0(num_classes: int, pretrained: bool, stem_leve: bool = False) -> nn.Module:
     weights = models.EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
     model = models.efficientnet_b0(weights=weights)
     # A cabeça do EfficientNet é um Sequential; o Linear é o último elemento
@@ -42,7 +51,8 @@ BACKBONES = {
 
 def build_model(num_classes: int,
                 arch: str = None,
-                pretrained: bool = None) -> nn.Module:
+                pretrained: bool = None,
+                stem_leve: bool = None) -> nn.Module:
     """
     Constrói o modelo do classificador.
 
@@ -51,12 +61,17 @@ def build_model(num_classes: int,
         arch:        Arquitetura do backbone. Se None, usa CLF_MODEL_ARCH do config.
         pretrained:  Se True, carrega pesos pré-treinados ImageNet.
                      Se None, usa CLF_PRETRAINED do config.
+        stem_leve:   Se True (só resnet18), stride do conv1 vira 1 e o maxpool
+                     inicial vira Identity -- ver CLF_STEM_LEVE em config.py.
+                     Se None, usa CLF_STEM_LEVE do config. Ignorado por outras
+                     arquiteturas (ex: efficientnet_b0).
 
     Returns:
         nn.Module pronto pra treinar.
     """
     arch       = arch       or CLF_MODEL_ARCH
     pretrained = CLF_PRETRAINED if pretrained is None else pretrained
+    stem_leve  = CLF_STEM_LEVE if stem_leve is None else stem_leve
 
     if arch not in BACKBONES:
         raise ValueError(
@@ -65,7 +80,7 @@ def build_model(num_classes: int,
         )
 
     builder = BACKBONES[arch]
-    return builder(num_classes=num_classes, pretrained=pretrained)
+    return builder(num_classes=num_classes, pretrained=pretrained, stem_leve=stem_leve)
 
 def count_parameters(model: nn.Module) -> int:
     """Retorna o número total de parâmetros treináveis do modelo."""
@@ -74,21 +89,31 @@ def count_parameters(model: nn.Module) -> int:
 if __name__ == "__main__":
     NUM_CLASSES = 1232  # kanji N1
 
-    print(f"Construindo modelo: arch={CLF_MODEL_ARCH}, pretrained={CLF_PRETRAINED}")
-    model = build_model(num_classes=NUM_CLASSES)
+    for stem_leve in (False, True):
+        print(f"\nConstruindo modelo: arch={CLF_MODEL_ARCH}, pretrained={CLF_PRETRAINED}, "
+              f"stem_leve={stem_leve}")
+        model = build_model(num_classes=NUM_CLASSES, stem_leve=stem_leve)
 
-    n_params = count_parameters(model)
-    print(f"Parâmetros treináveis: {n_params:,} ({n_params/1e6:.2f}M)")
+        n_params = count_parameters(model)
+        print(f"Parâmetros treináveis: {n_params:,} ({n_params/1e6:.2f}M)")
 
-    print("\nTestando forward pass...")
-    dummy = torch.randn(2, 3, 64, 64)  # batch=2, 3 canais, 64x64
-    with torch.no_grad():
-        out = model(dummy)
-    print(f"Input shape:  {dummy.shape}")
-    print(f"Output shape: {out.shape}")
-    print(f"Output range: [{out.min():.3f}, {out.max():.3f}]")
+        dummy = torch.randn(2, 3, 64, 64)  # batch=2, 3 canais, 64x64
 
-    assert out.shape == (2, NUM_CLASSES), \
-        f"Shape esperado (2, {NUM_CLASSES}), got {out.shape}"
+        mapa_final = {}
+        def _hook(module, inp, out):
+            mapa_final["shape"] = tuple(out.shape[-2:])
+        handle = model.layer4.register_forward_hook(_hook)
 
-    print("\n[OK] Modelo funcional.")
+        with torch.no_grad():
+            out = model(dummy)
+        handle.remove()
+
+        print(f"Input shape:  {dummy.shape}")
+        print(f"Mapa antes do avgpool (layer4 output): {mapa_final['shape']}")
+        print(f"Output shape: {out.shape}")
+        print(f"Output range: [{out.min():.3f}, {out.max():.3f}]")
+
+        assert out.shape == (2, NUM_CLASSES), \
+            f"Shape esperado (2, {NUM_CLASSES}), got {out.shape}"
+
+    print("\n[OK] Modelo funcional (com e sem stem_leve).")

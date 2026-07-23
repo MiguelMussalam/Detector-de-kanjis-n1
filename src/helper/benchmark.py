@@ -22,15 +22,19 @@ Uso:
 
 import json
 import os
+from collections import Counter
 
 import cv2
 
 from config import ROOT_DIR
 from src.pipeline.inference import Pipeline
-from src.helper.manga109_align import _dentro
+from src.helper.manga109_align import _dentro, limpar_string
+from src.helper.kanjis import get_kanjis
 
 BENCHMARK_DIR = os.path.join(ROOT_DIR, "data", "benchmark")
 GT_PATH = os.path.join(BENCHMARK_DIR, "ground_truth.json")
+
+_N1_SET = set(get_kanjis("n1"))
 
 
 def avaliar_pagina(deteccoes: list, linhas: list) -> dict:
@@ -40,14 +44,22 @@ def avaliar_pagina(deteccoes: list, linhas: list) -> dict:
     `src/helper/corpus_validate.py` (validacao full-corpus) -- mesma logica
     de match, uma so implementacao.
 
-    Alem de hit/miss, atribui cada miss a detector ou classificador: conta
-    quantas deteccoes (de QUALQUER classe) caem na regiao da linha -- se ainda
-    sobra alguma "candidata" nao usada quando um kanji esperado nao bate,
-    o detector achou uma caixa ali e o classificador que errou/rejeitou;
-    se nao sobra nenhuma, o detector nunca gerou caixa nenhuma pra aquele
-    caractere. E uma heuristica (Manga109 nao da posicao por caractere, so
-    por linha, entao nao da pra saber qual caixa "deveria" ser qual char),
-    nao uma atribuicao exata.
+    O "esperado" e' um multiset (contagem real de cada kanji na transcricao
+    da linha, via `linha["transcricao"]"), nao um set deduplicado -- um kanji
+    que aparece 3x na linha precisa de 3 acertos pra contar recall 100% ali,
+    nao 1 (bug real corrigido nesta sessao: contar por set deduplicado
+    inflava o recall em linha com caractere repetido, comum em particula/
+    pronome).
+
+    Alem de hit/miss, atribui cada miss faltante a detector ou classificador:
+    conta quantas deteccoes (de QUALQUER classe) sobram na regiao da linha
+    depois de descontar os acertos -- se ainda sobra alguma "candidata" nao
+    usada quando uma ocorrencia esperada nao bate, o detector achou uma caixa
+    ali e o classificador que errou/rejeitou; se nao sobra nenhuma, o
+    detector nunca gerou caixa nenhuma pra aquela ocorrencia. E uma
+    heuristica (Manga109 nao da posicao por caractere, so por linha, entao
+    nao da pra saber qual caixa "deveria" ser qual ocorrencia), nao uma
+    atribuicao exata.
     """
     hits, esperado = 0, 0
     miss_detector, miss_classificador = 0, 0
@@ -55,23 +67,25 @@ def avaliar_pagina(deteccoes: list, linhas: list) -> dict:
     for linha in linhas:
         x1, y1, x2, y2 = linha["bbox"]
         deteccoes_na_regiao = [d for d in deteccoes if _dentro(d.bbox, x1, y1, x2, y2)]
+
+        esperado_counter = Counter(c for c in limpar_string(linha["transcricao"]) if c in _N1_SET)
+        detectado_counter = Counter(d.kanji for d in deteccoes_na_regiao)
         candidatas_sobrando = len(deteccoes_na_regiao)
 
         marcas = []
-        for char in linha["n1_esperados"]:
-            esperado += 1
-            achou = any(d.kanji == char for d in deteccoes_na_regiao)
-            if achou:
-                hits += 1
-                candidatas_sobrando -= 1
-                marcas.append((char, True, None))
-            elif candidatas_sobrando > 0:
-                miss_classificador += 1
-                candidatas_sobrando -= 1
-                marcas.append((char, False, "classificador"))
-            else:
-                miss_detector += 1
-                marcas.append((char, False, "detector"))
+        for char, n_esperado in esperado_counter.items():
+            esperado += n_esperado
+            n_hit = min(n_esperado, detectado_counter.get(char, 0))
+            hits += n_hit
+            candidatas_sobrando -= n_hit
+
+            n_falta = n_esperado - n_hit
+            if n_falta > 0:
+                n_class = min(n_falta, max(0, candidatas_sobrando))
+                miss_classificador += n_class
+                candidatas_sobrando -= n_class
+                miss_detector += (n_falta - n_class)
+            marcas.append((char, n_hit, n_esperado))
         detalhe.append({"bbox": linha["bbox"], "marcas": marcas})
     return {
         "hits": hits, "esperado": esperado,
@@ -108,7 +122,10 @@ def main():
 
         resultado = avaliar_pagina(deteccoes, pagina["linhas"])
         for item in resultado["detalhe"]:
-            marcas = " ".join(f"{c}{'✓' if ok else '✗'}" for c, ok in item["marcas"])
+            marcas = " ".join(
+                f"{c}{n_hit}/{n_esp}{'✓' if n_hit == n_esp else '✗'}"
+                for c, n_hit, n_esp in item["marcas"]
+            )
             print(f"    bbox={tuple(item['bbox'])}  esperado: {marcas}")
 
         print(f"  [PAGINA] {resultado['hits']}/{resultado['esperado']} encontrados "

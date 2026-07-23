@@ -24,6 +24,7 @@ from config import (
     CLF_PROJECT_NAME, CLF_BATCH_SIZE,
     KAGGLE_WORKERS, LOCAL_WORKERS, ROOT_DIR,
     CLF_FINETUNE_FROM, CLF_FINETUNE_LR,
+    CLF_LABEL_SMOOTHING, CLF_STEM_LEVE,
 )
 from src.classifier.dataset import build_datasets, build_dataloaders
 from src.classifier.model import build_model, count_parameters
@@ -86,7 +87,8 @@ def main():
     num_classes = len(train_ds.classes)
     print(f"[INFO] {len(train_ds)} treino / {len(val_ds)} val / {num_classes} classes")
 
-    print("[INFO] Construindo modelo...")
+    print(f"[INFO] Construindo modelo (stem_leve={CLF_STEM_LEVE}, "
+          f"label_smoothing={CLF_LABEL_SMOOTHING})...")
     model = build_model(num_classes=num_classes).to(DEVICE)
 
     lr = CLF_LR
@@ -106,7 +108,7 @@ def main():
 
     print(f"[INFO] Parametros treinaveis: {count_parameters(model):,}")
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=CLF_LABEL_SMOOTHING)
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=CLF_WEIGHT_DECAY)
     scheduler = CosineAnnealingLR(optimizer, T_max=CLF_EPOCHS)
 

@@ -283,6 +283,25 @@ CLF_ROTATION_MAX     = _env("KD_CLF_ROTATION_MAX",     3.0)
 CLF_MODEL_ARCH   = _env("KD_CLF_MODEL_ARCH", "resnet18")
 CLF_PRETRAINED   = _env("KD_CLF_PRETRAINED", True)
 
+# Stem padrao do ResNet (conv1 7x7/stride2 + maxpool 3x3/stride2) foi desenhado
+# pra entrada 224x224 (ImageNet) -- com a nossa entrada de 64x64, o MESMO
+# downsample agressivo comprime a imagem num mapa de 2x2 antes do avgpool
+# (64->32->16->16->8->4->2), perdendo justamente o detalhe espacial fino de
+# traco que diferencia kanji complexos. Com essa flag, so o STRIDE do conv1
+# muda pra 1 (kernel/pesos pre-treinados continuam os mesmos, reaproveitados
+# 100% -- stride e' so config de forward, nao pesa no shape do tensor) e o
+# maxpool vira Identity -- mapa final fica 8x8 (16x mais posicoes espaciais
+# antes do avgpool). Desligado por padrao pra nao mudar o comportamento de
+# nenhum treino ja rodado/em andamento; ativar so pra um experimento dedicado.
+CLF_STEM_LEVE    = _env("KD_CLF_STEM_LEVE", False)
+
+# Label smoothing na CrossEntropyLoss -- pratica padrao pra classificacao com
+# muitas classes (1232 aqui), reduz overconfidence e costuma ajudar
+# generalizacao a custo praticamente zero. 0.0 = comportamento identico ao
+# CrossEntropyLoss padrao (sem smoothing), preserva compatibilidade com
+# qualquer treino ja rodado.
+CLF_LABEL_SMOOTHING = _env("KD_CLF_LABEL_SMOOTHING", 0.0)
+
 # Normalização (padrão ImageNet — compatível com backbones pré-treinados)
 CLF_NORM_MEAN    = [0.485, 0.456, 0.406]
 CLF_NORM_STD     = [0.229, 0.224, 0.225]
