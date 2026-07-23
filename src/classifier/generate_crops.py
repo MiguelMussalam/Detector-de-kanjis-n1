@@ -346,7 +346,8 @@ def _renderizar_base(char: str, font_path: str, font_size: int,
 
 def generate_sample(char: str, font_path: str, font_size: int,
                     rng: random.Random, output_size: int,
-                    canvas_margin: float, fonts_fallback: list = None) -> np.ndarray:
+                    canvas_margin: float, fonts_fallback: list = None,
+                    avisos: list = None) -> np.ndarray:
     """
     Gera um crop 64x64 do kanji com degradações aplicadas em ordem.
 
@@ -366,8 +367,15 @@ def generate_sample(char: str, font_path: str, font_size: int,
          contraste + fill ratio; se ficar fora da faixa, tenta de novo (novo
          sorteio de fundo/blur/ruído, mesma fonte/posição). Se esgotar as
          tentativas, gera uma versão sem blur/ruído -- garante legibilidade
-         na grande maioria dos casos (loga aviso no raro caso em que nem
-         isso resolve, sem nunca deixar de emitir uma amostra).
+         na grande maioria dos casos (raro caso em que nem isso resolve, sem
+         nunca deixar de emitir uma amostra).
+
+    `avisos`: se uma lista for passada, o aviso de legibilidade sub-ótima é
+    só ACUMULADO nela (sem print) -- essencial em geração em massa (centenas
+    de milhares de amostras, ~10-12% de taxa de aviso), onde imprimir um
+    print por ocorrência trava a renderização de output do notebook
+    (Jupyter/Kaggle engasga com dezenas de milhares de linhas numa célula só).
+    Se `avisos` for None (uso direto/sanity/teste), imprime na hora como antes.
     """
     img_base = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size)
     mask_glifo = img_base <= 240
@@ -400,8 +408,11 @@ def generate_sample(char: str, font_path: str, font_size: int,
     fallback = _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False)
     if (_contraste_glifo(fallback, mask_glifo) < CLF_MIN_CONTRASTE or
             not (CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(fallback, mask_glifo) <= CLF_MAX_FILL_RATIO)):
-        print(f"[WARN] Fora da faixa de legibilidade mesmo apos fallback: "
-              f"{char} / {os.path.basename(font_path)} @ {font_size}px")
+        msg = f"{char} / {os.path.basename(font_path)} @ {font_size}px"
+        if avisos is not None:
+            avisos.append(msg)
+        else:
+            print(f"[WARN] Fora da faixa de legibilidade mesmo apos fallback: {msg}")
     return fallback
 
 
@@ -418,6 +429,8 @@ def generate_split(kanjis: list, fonts: list, samples_per_class: int,
     np.random.seed(seed)
 
     os.makedirs(output_dir, exist_ok=True)
+    avisos = []
+    n_falhas = 0
 
     for char in tqdm(kanjis, desc=f"[{split_name}]"):
         class_dir = os.path.join(output_dir, codepoint_dir(char))
@@ -435,12 +448,22 @@ def generate_split(kanjis: list, fonts: list, samples_per_class: int,
                     output_size=CLASSIFIER_INPUT_SIZE,
                     canvas_margin=CLASSIFIER_CANVAS_MARGIN,
                     fonts_fallback=fonts,
+                    avisos=avisos,
                 )
                 Image.fromarray(img).save(
                     os.path.join(class_dir, f"{i:03d}.png")
                 )
             except Exception as e:
-                print(f"[WARN] Falha em {char} com {os.path.basename(font_path)} @ {font_size}px: {e}")
+                n_falhas += 1
+                if n_falhas <= 20:
+                    print(f"[WARN] Falha em {char} com {os.path.basename(font_path)} @ {font_size}px: {e}")
+
+    total = len(kanjis) * samples_per_class
+    if avisos:
+        print(f"[INFO] [{split_name}] {len(avisos)}/{total} amostras ({100*len(avisos)/max(1,total):.1f}%) "
+              f"com legibilidade sub-otima mesmo apos fallback -- primeiras 5: {avisos[:5]}")
+    if n_falhas > 20:
+        print(f"[AVISO] [{split_name}] {n_falhas} falhas totais na geracao (só as 20 primeiras foram exibidas acima)")
 
 
 def generate_sanity(kanjis: list, fonts: list, output_dir: str, count: int, seed: int):
@@ -527,6 +550,8 @@ def generate_outros_split(fonts: list, pools: dict, samples: int,
     )
     rng.shuffle(categorias)
 
+    avisos = []
+    n_falhas = 0
     for i, cat in enumerate(tqdm(categorias, desc=f"[{split_name}-outros]")):
         font_path = rng.choice(fonts)
         font_size = rng.choices(CLASSIFIER_FONT_SIZES, weights=CLASSIFIER_FONT_SIZE_WEIGHTS)[0]
@@ -540,10 +565,20 @@ def generate_outros_split(fonts: list, pools: dict, samples: int,
                     rng=rng, output_size=CLASSIFIER_INPUT_SIZE,
                     canvas_margin=CLASSIFIER_CANVAS_MARGIN,
                     fonts_fallback=fonts,
+                    avisos=avisos,
                 )
             Image.fromarray(img).save(os.path.join(class_dir, f"{i:04d}.png"))
         except Exception as e:
-            print(f"[WARN] Falha outros ({cat}): {e}")
+            n_falhas += 1
+            if n_falhas <= 20:
+                print(f"[WARN] Falha outros ({cat}): {e}")
+
+    if avisos:
+        print(f"[INFO] [{split_name}-outros] {len(avisos)}/{len(categorias)} amostras "
+              f"({100*len(avisos)/max(1,len(categorias)):.1f}%) com legibilidade sub-otima -- "
+              f"primeiras 5: {avisos[:5]}")
+    if n_falhas > 20:
+        print(f"[AVISO] [{split_name}-outros] {n_falhas} falhas totais (só as 20 primeiras foram exibidas acima)")
 
 
 def main():
