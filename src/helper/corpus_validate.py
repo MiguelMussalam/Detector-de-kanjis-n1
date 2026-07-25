@@ -66,6 +66,9 @@ def main():
     parser.add_argument("--limit-volumes", type=int, default=None)
     parser.add_argument("--sample-paginas-por-volume", type=int, default=None)
     parser.add_argument("--out", default=RESULT_PATH)
+    parser.add_argument("--classifier-weights", default=None,
+                        help="caminho alternativo pro checkpoint do classificador "
+                             "(pra comparar dois checkpoints sem trocar o weights/classifier_best.pt ativo)")
     args = parser.parse_args()
 
     with open(args.ground_truth, encoding="utf-8") as f:
@@ -82,7 +85,7 @@ def main():
     print(f"[INFO] Avaliando {len(paginas)} paginas...")
 
     print("[INFO] Carregando pipeline...")
-    pipeline = Pipeline()
+    pipeline = Pipeline(classifier_weights=args.classifier_weights)
 
     por_volume = {}
     hits_total, esperado_total = 0, 0

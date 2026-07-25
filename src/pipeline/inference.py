@@ -67,7 +67,14 @@ def load_classifier(weights_path: str = None, device: str = "cpu"):
         )
     checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
     classes = checkpoint["classes"]
-    model = build_model(num_classes=len(classes))
+    # stem_leve muda stride/Identity (nao pesa no state_dict) -- se nao ler do
+    # proprio checkpoint, a arquitetura reconstruida pode nao bater com a que
+    # treinou os pesos (CLF_STEM_LEVE local pode divergir do valor usado no
+    # treino, ex: setado so via env var na sessao do Kaggle). Checkpoints
+    # salvos antes desse campo existir (default False) foram todos treinados
+    # sem stem_leve, entao o fallback e' correto pra eles.
+    stem_leve = checkpoint.get("stem_leve", False)
+    model = build_model(num_classes=len(classes), stem_leve=stem_leve)
     model.load_state_dict(checkpoint["model_state"])
     model.to(device)
     model.eval()

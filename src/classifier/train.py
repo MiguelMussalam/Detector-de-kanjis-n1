@@ -149,6 +149,13 @@ def main():
             "classes": train_ds.classes,
             "epoch": epoch,
             "val_acc": val_acc,
+            # stride/Identity do stem_leve nao aparecem no state_dict (nao sao
+            # peso, so config de forward) -- sem guardar isso aqui, carregar o
+            # checkpoint em outra maquina/sessao (onde CLF_STEM_LEVE local
+            # default e' False) reconstroi a arquitetura ERRADA e os pesos da
+            # conv1 carregam sem erro de shape, mas a rede fica incoerente
+            # (bug real encontrado ao validar: recall caiu pra 0%).
+            "stem_leve": CLF_STEM_LEVE,
         }
         torch.save(checkpoint, last_path)
 
