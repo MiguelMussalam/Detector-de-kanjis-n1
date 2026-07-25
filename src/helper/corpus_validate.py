@@ -89,6 +89,7 @@ def main():
 
     por_volume = {}
     hits_total, esperado_total = 0, 0
+    miss_detector_total, miss_classificador_total = 0, 0
     deteccoes_total, outros_total = 0, 0
     inicio = time.time()
 
@@ -107,13 +108,28 @@ def main():
         resultado = avaliar_pagina(deteccoes, pagina["linhas"])
         hits_total += resultado["hits"]
         esperado_total += resultado["esperado"]
+        miss_detector_total += resultado["miss_detector"]
+        miss_classificador_total += resultado["miss_classificador"]
 
-        vol_stats = por_volume.setdefault(origem["volume"], {"hits": 0, "esperado": 0})
+        vol_stats = por_volume.setdefault(
+            origem["volume"],
+            {"hits": 0, "esperado": 0, "miss_detector": 0, "miss_classificador": 0},
+        )
         vol_stats["hits"] += resultado["hits"]
         vol_stats["esperado"] += resultado["esperado"]
+        vol_stats["miss_detector"] += resultado["miss_detector"]
+        vol_stats["miss_classificador"] += resultado["miss_classificador"]
 
     duracao = time.time() - inicio
     seg_por_pagina = duracao / max(1, len(paginas))
+
+    # Invariante: todo caractere esperado ou vira hit, ou e' atribuido a
+    # exatamente uma das duas causas de miss -- protege contra drift futuro
+    # em avaliar_pagina() que quebre essa soma silenciosamente.
+    assert hits_total + miss_detector_total + miss_classificador_total == esperado_total, (
+        f"Inconsistencia: hits({hits_total}) + miss_detector({miss_detector_total}) + "
+        f"miss_classificador({miss_classificador_total}) != esperado({esperado_total})"
+    )
 
     resumo = {
         "n_paginas": len(paginas),
@@ -126,6 +142,8 @@ def main():
         "hits_total": hits_total,
         "esperado_total": esperado_total,
         "recall_pct": 100 * hits_total / max(1, esperado_total),
+        "miss_detector_total": miss_detector_total,
+        "miss_classificador_total": miss_classificador_total,
         "por_volume": {
             vol: {**s, "recall_pct": 100 * s["hits"] / max(1, s["esperado"])}
             for vol, s in por_volume.items()
@@ -136,12 +154,17 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(resumo, f, ensure_ascii=False, indent=2)
 
+    miss_total = esperado_total - hits_total
     print(f"\n[RESUMO] {len(paginas)} paginas, {seg_por_pagina:.2f}s/pagina "
           f"(extrapolado p/ {TOTAL_PAGINAS_MANGA109} paginas: "
           f"{resumo['extrapolado_corpus_completo_horas']:.1f}h)")
     print(f"[RESUMO] {deteccoes_total} deteccoes, {outros_total} "
           f"({resumo['outros_pct']:.1f}%) classificadas como OUTROS")
     print(f"[RESUMO] recall = {hits_total}/{esperado_total} ({resumo['recall_pct']:.1f}%)")
+    print(f"[RESUMO] misses: {miss_detector_total} detector "
+          f"({100*miss_detector_total/max(1,miss_total):.1f}% dos misses), "
+          f"{miss_classificador_total} classificador "
+          f"({100*miss_classificador_total/max(1,miss_total):.1f}% dos misses)")
     print(f"[INFO] Detalhado salvo em {args.out}")
 
 
