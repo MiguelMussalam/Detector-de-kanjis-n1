@@ -40,8 +40,15 @@ OUT_DIR = os.path.join(ROOT_DIR, "data", "pesquisa", "kanji_coverage")
 
 # Paleta validada (ver skill de dataviz do projeto) -- rampa ordinal azul,
 # 5 degraus, N1 (mais claro) -> N5 (mais escuro): a cor reforça visualmente
-# que N1..N5 é uma escala ordenada de raridade, não categorias soltas.
+# que N1..N5 é uma escala ordenada de raridade, não categorias soltas. Usada
+# nos graficos de BARRA (a altura ja mostra a ordem/magnitude).
 _RAMPA_ORDINAL_N1_N5 = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
+
+# Paleta categorica validada (5 primeiros slots, ordem fixa) -- usada onde a
+# tarefa e distinguir fatias/categorias a olho (pizza), nao mostrar magnitude
+# por tom -- cores parecidas (mesma rampa) dificultam ver onde uma fatia
+# termina e a outra comeca.
+_CATEGORICA_5 = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
 _AZUL = "#2a78d6"
 _TINTA = "#0b0b0b"
 _TINTA_SECUNDARIA = "#52514e"
@@ -229,6 +236,49 @@ def comparar_niveis(gt: dict, out_dir: str = OUT_DIR) -> dict:
     return {"csv": csv_path, "png": png_path, "linhas": linhas}
 
 
+def top_kanji_por_nivel(gt: dict, out_dir: str = OUT_DIR) -> dict:
+    """
+    O kanji MAIS frequente de cada nível JLPT (N1-N5), lado a lado -- um
+    exemplo real e concreto por nível (não só estatística agregada), pra
+    demonstrar a diferença de aparição de um jeito direto de ler.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    niveis = ["n1", "n2", "n3", "n4", "n5"]
+    fonte_cjk = _fonte_cjk()
+
+    tops = []
+    for nivel in niveis:
+        kanjis = get_kanjis(nivel)
+        contagem = contar_ocorrencias(set(kanjis), gt)
+        kanji, ocorrencias = contagem.most_common(1)[0]
+        tops.append({"nivel": nivel.upper(), "kanji": kanji, "ocorrencias": ocorrencias})
+
+    fig, ax = plt.subplots(figsize=(7.5, 6), facecolor=_SUPERFICIE)
+    _estilo_eixo(ax)
+    nomes = [t["nivel"] for t in tops]
+    valores = [t["ocorrencias"] for t in tops]
+    bars = ax.bar(nomes, valores, color=_RAMPA_ORDINAL_N1_N5, width=0.6, zorder=3)
+    ax.set_yscale("log")
+    ax.set_ylim(1, max(valores) * 8)
+    for bar, t in zip(bars, tops):
+        cx = bar.get_x() + bar.get_width() / 2
+        ax.text(cx, bar.get_height() * 1.15, f"{t['ocorrencias']}x",
+                ha="center", va="bottom", fontsize=10.5, color=_TINTA_SECUNDARIA)
+        ax.text(cx, bar.get_height() * 1.9, t["kanji"],
+                ha="center", va="bottom", fontsize=30, color=_TINTA, fontproperties=fonte_cjk)
+    ax.set_ylabel("Ocorrências no corpus (escala log)", fontsize=11, color=_TINTA_SECUNDARIA)
+    ax.set_xlabel("Nível JLPT", fontsize=11, color=_TINTA_SECUNDARIA)
+    ax.set_title("O kanji mais frequente de cada nível JLPT no Manga109", fontsize=14, color=_TINTA,
+                fontweight="bold", pad=14, loc="left")
+    fig.tight_layout()
+    png_path = os.path.join(out_dir, "top_kanji_por_nivel.png")
+    fig.savefig(png_path, dpi=150, facecolor=_SUPERFICIE)
+    plt.close(fig)
+
+    print(f"[INFO] {png_path}")
+    return {"png": png_path, "tops": tops}
+
+
 def comparar_niveis_pizza(linhas: list, out_dir: str = OUT_DIR) -> dict:
     """
     Mesmo dado de `comparar_niveis` (reaproveita `linhas`, não recalcula),
@@ -244,7 +294,7 @@ def comparar_niveis_pizza(linhas: list, out_dir: str = OUT_DIR) -> dict:
     fig, ax = plt.subplots(figsize=(7, 7), facecolor=_SUPERFICIE)
     fig.patch.set_facecolor(_SUPERFICIE)
     wedges, _, autotexts = ax.pie(
-        totais, colors=_RAMPA_ORDINAL_N1_N5, startangle=90, counterclock=False,
+        totais, colors=_CATEGORICA_5, startangle=90, counterclock=False,
         autopct=lambda pct: f"{pct:.0f}%", pctdistance=0.78,
         wedgeprops={"edgecolor": _SUPERFICIE, "linewidth": 2},
     )
@@ -278,6 +328,7 @@ def main():
     print(f"[INFO] Corpus carregado: {len(gt['paginas'])} páginas")
     res_n1 = cobertura_n1(gt)
     top_n1_kanji(res_n1["contagem"], n=50)
+    top_kanji_por_nivel(gt)
     res_niveis = comparar_niveis(gt)
     comparar_niveis_pizza(res_niveis["linhas"])
 
