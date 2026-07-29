@@ -26,9 +26,12 @@ import json
 import os
 from collections import Counter
 
+import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 from config import ROOT_DIR
+from src.helper.fonts import get_fonts_list
 from src.helper.kanjis import get_kanjis
 from src.helper.manga109_align import limpar_string
 from src.helper.manga109_corpus import GT_PATH
@@ -45,6 +48,17 @@ _TINTA_SECUNDARIA = "#52514e"
 _TINTA_MUTED = "#898781"
 _GRADE = "#e1e0d9"
 _SUPERFICIE = "#fcfcfb"
+
+# Rampa sequencial continua (mesmo azul da rampa ordinal, degraus 100->700 da
+# paleta) -- usada quando precisa de mais tons do que os 5 degraus nomeados
+# comportam (ex: 50 barras).
+_RAMPA_SEQUENCIAL = LinearSegmentedColormap.from_list("azul_seq", ["#cde2fb", "#0d366b"])
+
+
+def _fonte_cjk():
+    """cv2/matplotlib nao tem glifo CJK por padrao -- reaproveita fonte japonesa do projeto."""
+    fontes = get_fonts_list()
+    return fm.FontProperties(fname=fontes[0]) if fontes else None
 
 
 def carregar_corpus() -> dict:
@@ -123,7 +137,49 @@ def cobertura_n1(gt: dict, out_dir: str = OUT_DIR) -> dict:
 
     print(f"[INFO] {csv_path}")
     print(f"[INFO] {png_path}")
-    return {"csv": csv_path, "png": png_path, "faixas": faixas}
+    return {"csv": csv_path, "png": png_path, "faixas": faixas, "contagem": contagem}
+
+
+def top_n1_kanji(contagem: Counter, out_dir: str = OUT_DIR, n: int = 50) -> dict:
+    """
+    Gráfico grande (barras horizontais, um kanji por linha) dos N kanji N1
+    mais frequentes -- demonstração visual de quão rápido a frequência cai
+    (cauda longa), pensado pra apresentação (não pra CSV, o `cobertura_n1`
+    já cobre isso).
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    top = contagem.most_common(n)
+    fonte_cjk = _fonte_cjk()
+
+    fig_h = max(4.0, 0.32 * len(top))
+    fig, ax = plt.subplots(figsize=(9, fig_h), facecolor=_SUPERFICIE)
+    _estilo_eixo(ax)
+    ax.xaxis.grid(True, color=_GRADE, linewidth=0.8, zorder=0)
+    ax.yaxis.grid(False)
+
+    ys = list(range(len(top)))
+    valores = [v for _, v in top]
+    cores = [_RAMPA_SEQUENCIAL(1 - i / max(1, len(top) - 1)) for i in range(len(top))]
+    ax.barh(ys, valores, color=cores, height=0.72, zorder=3)
+    ax.set_yticks(ys)
+    ax.set_yticklabels([k for k, _ in top], fontproperties=fonte_cjk, fontsize=13)
+    ax.invert_yaxis()  # mais frequente no topo
+    ax.set_ylim(len(top) - 0.5, -0.5)
+
+    for y, v in zip(ys, valores):
+        ax.text(v + max(valores) * 0.012, y, str(v), va="center", ha="left",
+                fontsize=8.5, color=_TINTA_SECUNDARIA)
+
+    ax.set_xlabel("Ocorrências no corpus Manga109", fontsize=11, color=_TINTA_SECUNDARIA)
+    ax.set_title(f"Top {len(top)} kanji N1 mais frequentes — queda acentuada de frequência",
+                fontsize=15, color=_TINTA, fontweight="bold", pad=16, loc="left")
+    fig.tight_layout()
+    png_path = os.path.join(out_dir, f"top_{n}_kanji_n1.png")
+    fig.savefig(png_path, dpi=150, facecolor=_SUPERFICIE)
+    plt.close(fig)
+
+    print(f"[INFO] {png_path}")
+    return {"png": png_path}
 
 
 def comparar_niveis(gt: dict, out_dir: str = OUT_DIR) -> dict:
@@ -173,11 +229,51 @@ def comparar_niveis(gt: dict, out_dir: str = OUT_DIR) -> dict:
     return {"csv": csv_path, "png": png_path, "linhas": linhas}
 
 
+def comparar_niveis_pizza(linhas: list, out_dir: str = OUT_DIR) -> dict:
+    """
+    Mesmo dado de `comparar_niveis` (reaproveita `linhas`, não recalcula),
+    em pizza -- fatia = participação de cada nível no total de ocorrências
+    N1-N5 combinadas. Complementa o gráfico de barras (que mostra média por
+    classe): aqui a pergunta é "de tudo que é N1-N5 no corpus, quanto é de
+    cada nível", não "quão frequente é um kanji típico daquele nível".
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    nomes = [l["nivel"] for l in linhas]
+    totais = [l["ocorrencias_totais"] for l in linhas]
+
+    fig, ax = plt.subplots(figsize=(7, 7), facecolor=_SUPERFICIE)
+    fig.patch.set_facecolor(_SUPERFICIE)
+    wedges, _, autotexts = ax.pie(
+        totais, colors=_RAMPA_ORDINAL_N1_N5, startangle=90, counterclock=False,
+        autopct=lambda pct: f"{pct:.0f}%", pctdistance=0.78,
+        wedgeprops={"edgecolor": _SUPERFICIE, "linewidth": 2},
+    )
+    for t in autotexts:
+        t.set_color("#ffffff")
+        t.set_fontsize(11)
+    ax.legend(
+        wedges, [f"{n} ({t:,})".replace(",", ".") for n, t in zip(nomes, totais)],
+        title="Nível JLPT (ocorrências)", loc="center left", bbox_to_anchor=(1.0, 0.5),
+        frameon=False, fontsize=10.5, title_fontsize=10.5, labelcolor=_TINTA_SECUNDARIA,
+    )
+    ax.set_title("Participação de cada nível JLPT nas ocorrências N1-N5 no Manga109",
+                fontsize=13.5, color=_TINTA, fontweight="bold", pad=16)
+    fig.tight_layout()
+    png_path = os.path.join(out_dir, "comparacao_niveis_pizza.png")
+    fig.savefig(png_path, dpi=150, facecolor=_SUPERFICIE, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"[INFO] {png_path}")
+    return {"png": png_path}
+
+
 def main():
     gt = carregar_corpus()
     print(f"[INFO] Corpus carregado: {len(gt['paginas'])} páginas")
-    cobertura_n1(gt)
-    comparar_niveis(gt)
+    res_n1 = cobertura_n1(gt)
+    top_n1_kanji(res_n1["contagem"], n=50)
+    res_niveis = comparar_niveis(gt)
+    comparar_niveis_pizza(res_niveis["linhas"])
 
 
 if __name__ == "__main__":
