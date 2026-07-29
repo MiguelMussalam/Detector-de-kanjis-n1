@@ -122,31 +122,36 @@ def apply_rotation(img: np.ndarray, rng: random.Random) -> np.ndarray:
     return np.array(pil)
 
 
-def apply_translate_and_crop(img: np.ndarray, rng: random.Random,
-                             output_size: int) -> np.ndarray:
+def apply_translate_and_crop(img: np.ndarray, rng: random.Random) -> np.ndarray:
     """
-    Aplica deslocamento aleatório e recorta para o tamanho final.
-    Simula bbox imperfeita do detector.
+    Desloca o glifo dentro do canvas e recorta -- simula bbox imperfeita do
+    detector (kanji descentralizado no recorte).
+
+    O recorte precisa ser MENOR que o canvas de entrada, reservando de
+    propósito a folga usada pelo deslocamento. Sem essa folga (recorte do
+    tamanho do canvas inteiro), a janela não tem espaço pra deslizar: o clamp
+    sempre volta pro mesmo lugar e o "deslocamento" vira um no-op na metade
+    dos casos, e um recorte de tamanho variável (não um deslocamento de
+    verdade) na outra metade -- achado na auditoria visual (grade de
+    "translacao" não mostrava nenhuma mudança perceptível entre severidades).
     """
     h, w = img.shape
+    max_dx = int(w * CLF_TRANSLATE_MAX)
+    max_dy = int(h * CLF_TRANSLATE_MAX)
+
     if rng.random() > CLF_TRANSLATE_PROB:
         dx, dy = 0, 0
     else:
-        max_dx = int(w * CLF_TRANSLATE_MAX)
-        max_dy = int(h * CLF_TRANSLATE_MAX)
         dx = rng.randint(-max_dx, max_dx)
         dy = rng.randint(-max_dy, max_dy)
 
+    crop_size = min(h - 2 * max_dy, w - 2 * max_dx)
     cx = w // 2 + dx
     cy = h // 2 + dy
+    x0 = max(0, min(w - crop_size, cx - crop_size // 2))
+    y0 = max(0, min(h - crop_size, cy - crop_size // 2))
 
-    crop_size = min(h, w)
-    x0 = max(0, cx - crop_size // 2)
-    y0 = max(0, cy - crop_size // 2)
-    x1 = min(w, x0 + crop_size)
-    y1 = min(h, y0 + crop_size)
-
-    return img[y0:y1, x0:x1]
+    return img[y0:y0 + crop_size, x0:x0 + crop_size]
 
 
 def resize_to_target(img: np.ndarray, target: int) -> np.ndarray:
@@ -340,7 +345,7 @@ def _renderizar_base(char: str, font_path: str, font_size: int,
     img = render_glyph(char, font_path, font_size, canvas_size)
     img = apply_morphology(img, rng, font_path=font_path)
     img = apply_rotation(img, rng)
-    img = apply_translate_and_crop(img, rng, output_size)
+    img = apply_translate_and_crop(img, rng)
     return resize_to_target(img, output_size)
 
 
@@ -591,6 +596,10 @@ def main():
                         help="Pula geração do sanity")
     parser.add_argument("--skip-outros", action="store_true",
                         help="Pula geração da classe 'outros' (rejeição de não-N1)")
+    parser.add_argument("--skip-train", action="store_true",
+                        help="Pula geração do split de treino (util pra regenerar so o "
+                             "val, ex: pra rodar eval.py --only confusao sem esperar o "
+                             "treino inteiro ser gerado de novo)")
     args = parser.parse_args()
 
     print(f"[INFO] Carregando kanji nível {CLASSIFIER_KANJI_LEVEL}...")
@@ -619,10 +628,11 @@ def main():
         print("[INFO] Modo sanity-only. Encerrando.")
         return
 
-    print(f"\n[INFO] Gerando treino: {CLASSIFIER_SAMPLES_TRAIN} amostras × {len(kanjis)} classes = "
-          f"{CLASSIFIER_SAMPLES_TRAIN * len(kanjis)} crops")
-    generate_split(kanjis, fonts, CLASSIFIER_SAMPLES_TRAIN,
-                   CLASSIFIER_TRAIN_DIR, CLASSIFIER_SEED_TRAIN, "train")
+    if not args.skip_train:
+        print(f"\n[INFO] Gerando treino: {CLASSIFIER_SAMPLES_TRAIN} amostras × {len(kanjis)} classes = "
+              f"{CLASSIFIER_SAMPLES_TRAIN * len(kanjis)} crops")
+        generate_split(kanjis, fonts, CLASSIFIER_SAMPLES_TRAIN,
+                       CLASSIFIER_TRAIN_DIR, CLASSIFIER_SEED_TRAIN, "train")
 
     print(f"\n[INFO] Gerando validação: {CLASSIFIER_SAMPLES_VAL} amostras × {len(kanjis)} classes = "
           f"{CLASSIFIER_SAMPLES_VAL * len(kanjis)} crops")
@@ -634,9 +644,10 @@ def main():
         pools = build_outros_pools(kanjis)
         print(f"[INFO] Pool kanji não-N1: {len(pools['kanji'])} | kana: {len(pools['kana'])} | latim: {len(pools['latim'])}")
 
-        print(f"\n[INFO] Gerando treino '{CLF_OUTROS_LABEL}': {CLF_OUTROS_SAMPLES_TRAIN} crops")
-        generate_outros_split(fonts, pools, CLF_OUTROS_SAMPLES_TRAIN,
-                             CLASSIFIER_TRAIN_DIR, CLASSIFIER_SEED_TRAIN, "train")
+        if not args.skip_train:
+            print(f"\n[INFO] Gerando treino '{CLF_OUTROS_LABEL}': {CLF_OUTROS_SAMPLES_TRAIN} crops")
+            generate_outros_split(fonts, pools, CLF_OUTROS_SAMPLES_TRAIN,
+                                 CLASSIFIER_TRAIN_DIR, CLASSIFIER_SEED_TRAIN, "train")
 
         print(f"\n[INFO] Gerando validação '{CLF_OUTROS_LABEL}': {CLF_OUTROS_SAMPLES_VAL} crops")
         generate_outros_split(fonts, pools, CLF_OUTROS_SAMPLES_VAL,

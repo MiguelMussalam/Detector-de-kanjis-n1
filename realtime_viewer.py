@@ -64,6 +64,29 @@ def desenhar_deteccoes_detector(frame_bgr, deteccoes):
     return frame
 
 
+def desenhar_deteccoes_ocr(frame_bgr, resultados, fonte):
+    """
+    Desenha o quadrilatero + texto bruto que o EasyOCR leu em cada regiao.
+    `resultados` vem de reader.readtext(..., detail=1): lista de (bbox_poly, texto, conf).
+    Sem filtro N1 aqui -- e' so visualizacao ao vivo pra comparar lado a lado com o
+    pipeline proprio; a comparacao formal (com metrica) e' feita por
+    src/helper/ocr_baseline_compare.py.
+    """
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(frame_rgb)
+    draw = ImageDraw.Draw(img_pil)
+
+    for bbox_poly, texto, conf in resultados:
+        pontos = [tuple(int(v) for v in p) for p in bbox_poly]
+        cor = (0, 255, 0) if conf >= 0.3 else (255, 140, 0)
+        draw.line(pontos + [pontos[0]], fill=cor, width=2)
+        x1, y1 = pontos[0]
+        draw.text((x1, max(0, y1 - 20)), f"{texto} ({conf:.2f})", font=fonte, fill=cor)
+
+    frame_rgb_out = np.array(img_pil)
+    return cv2.cvtColor(frame_rgb_out, cv2.COLOR_RGB2BGR)
+
+
 def desenhar_deteccoes(frame_bgr, deteccoes, fonte, mostrar_outros=False):
     """
     Desenha bbox + kanji previsto + confianca do classificador em cada deteccao.
@@ -101,21 +124,46 @@ def main():
     parser.add_argument("--detector-only", action="store_true",
                         help="Roda so o detector (sem classificador) -- mostra so bbox + confianca de deteccao, "
                              "util pra isolar visualmente a cobertura do detector.")
+    parser.add_argument("--ocr-baseline", action="store_true",
+                        help="Roda o EasyOCR (baseline tradicional) na regiao capturada, pra comparar "
+                             "visualmente com o pipeline proprio. Sob demanda (tecla ESPACO), nao a cada "
+                             "frame -- EasyOCR na CPU e' lento demais pra isso.")
     args = parser.parse_args()
 
     modo_detector_only = args.detector_only
-    titulo_modo = "Detector (sem classificador)" if modo_detector_only else "Pipeline Completo (Detector + Classificador N1)"
+    modo_ocr_baseline = args.ocr_baseline
+    if modo_detector_only and modo_ocr_baseline:
+        print("[ERROR] Use --detector-only OU --ocr-baseline, nao os dois.")
+        sys.exit(1)
+
+    if modo_ocr_baseline:
+        titulo_modo = "EasyOCR (baseline tradicional)"
+    elif modo_detector_only:
+        titulo_modo = "Detector (sem classificador)"
+    else:
+        titulo_modo = "Pipeline Completo (Detector + Classificador N1)"
 
     print("=" * 60)
     print(f"   {titulo_modo} - Real-Time   ")
     print("=" * 60)
 
+    window_name = "Pipeline Kanji N1 - Real Time"
+
     fonte = None
     detector = None
     pipeline = None
+    ocr_reader = None
 
     try:
-        if modo_detector_only:
+        if modo_ocr_baseline:
+            print("[INFO] Carregando EasyOCR (japones)...")
+            import easyocr
+            ocr_reader = easyocr.Reader(["ja"], gpu=False)
+            fonte = carregar_fonte_overlay()
+            print("[INFO] EasyOCR carregado com sucesso!")
+            print("[AVISO] EasyOCR e' lento na CPU -- por isso aqui ele NAO roda a cada frame. "
+                  "Posicione a regiao com [WASD]/[R]/[F] e pressione [ESPACO] pra rodar o OCR sob demanda.")
+        elif modo_detector_only:
             print("[INFO] Carregando detector...")
             detector = load_detector(DETECTOR_WEIGHTS_PATH)
             print("[INFO] Detector carregado com sucesso!")
@@ -163,16 +211,23 @@ def main():
         print("  - [W, A, S, D] : Mover a regiao de captura (Cima, Esquerda, Baixo, Direita)")
         print("  - [R]          : Aumentar tamanho da janela de captura (+50px)")
         print("  - [F]          : Diminuir tamanho da janela de captura (-50px)")
-        if not modo_detector_only:
+        if not modo_detector_only and not modo_ocr_baseline:
             print("  - [O]          : Mostrar/esconder deteccoes classificadas como OUTROS")
+        if modo_ocr_baseline:
+            print("  - [ESPACO]     : Rodar o EasyOCR no frame atual (e' sob demanda, nao continuo -- "
+                  "CPU e' lenta demais pra rodar a cada frame)")
         print("  - [H]          : Imprimir informacoes de depuracao no terminal")
         print("  - [Q]          : Sair do visualizador")
         print("-" * 60)
 
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
         prev_time = time.time()
         mostrar_outros = False
-        if not modo_detector_only:
+        if not modo_detector_only and not modo_ocr_baseline:
             print(f"[INFO] Exibindo OUTROS: {mostrar_outros} (pressione [O] para alternar)")
+        deteccoes = []
 
         while True:
             try:
@@ -184,7 +239,11 @@ def main():
             img = np.array(screenshot)
             frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
-            if modo_detector_only:
+            if modo_ocr_baseline:
+                # Sob demanda (tecla [ESPACO]) -- rodar a cada frame trava a navegacao,
+                # ja que o EasyOCR na CPU leva segundos por chamada.
+                annotated_frame = desenhar_deteccoes_ocr(frame, deteccoes, fonte)
+            elif modo_detector_only:
                 deteccoes = detectar_somente(detector, frame)
                 annotated_frame = desenhar_deteccoes_detector(frame, deteccoes)
             else:
@@ -205,9 +264,12 @@ def main():
                 2,
                 cv2.LINE_AA
             )
+            rodape = ("[Q] Sair | [WASD] Mover | [R/F] Redimensionar | [ESPACO] Rodar OCR"
+                      if modo_ocr_baseline else
+                      "[Q] Sair | [WASD] Mover | [R/F] Redimensionar")
             cv2.putText(
                 annotated_frame,
-                "[Q] Sair | [WASD] Mover | [R/F] Redimensionar",
+                rodape,
                 (15, annotated_frame.shape[0] - 15),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -216,7 +278,7 @@ def main():
                 cv2.LINE_AA
             )
 
-            cv2.imshow('Pipeline Kanji N1 - Real Time', annotated_frame)
+            cv2.imshow(window_name, annotated_frame)
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -226,34 +288,49 @@ def main():
             elif key == ord('w'):
                 region["top"] -= 20
                 clip_region(region)
+                deteccoes = [] if modo_ocr_baseline else deteccoes
             elif key == ord('s'):
                 region["top"] += 20
                 clip_region(region)
+                deteccoes = [] if modo_ocr_baseline else deteccoes
             elif key == ord('a'):
                 region["left"] -= 20
                 clip_region(region)
+                deteccoes = [] if modo_ocr_baseline else deteccoes
             elif key == ord('d'):
                 region["left"] += 20
                 clip_region(region)
+                deteccoes = [] if modo_ocr_baseline else deteccoes
             elif key == ord('r'):
                 region["width"] += 50
                 region["height"] += 50
                 region["left"] -= 25
                 region["top"] -= 25
                 clip_region(region)
+                deteccoes = [] if modo_ocr_baseline else deteccoes
             elif key == ord('f'):
                 region["width"] -= 50
                 region["height"] -= 50
                 region["left"] += 25
                 region["top"] += 25
                 clip_region(region)
-            elif key == ord('o') and not modo_detector_only:
+                deteccoes = [] if modo_ocr_baseline else deteccoes
+            elif key == ord(' ') and modo_ocr_baseline:
+                print("[INFO] Rodando EasyOCR no frame atual...")
+                t0 = time.time()
+                frame_rgb_in = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                deteccoes = ocr_reader.readtext(frame_rgb_in, detail=1, paragraph=False)
+                print(f"[INFO] OCR concluido em {time.time() - t0:.2f}s -- {len(deteccoes)} regiao(oes) de texto")
+            elif key == ord('o') and not modo_detector_only and not modo_ocr_baseline:
                 mostrar_outros = not mostrar_outros
                 print(f"[INFO] Exibindo OUTROS: {mostrar_outros}")
             elif key == ord('h'):
                 print(f"[DEBUG] Regiao de Captura: Top={region['top']}, Left={region['left']}, Lg={region['width']}, Al={region['height']}")
                 print(f"[DEBUG] {len(deteccoes)} deteccoes no frame atual:")
-                if modo_detector_only:
+                if modo_ocr_baseline:
+                    for bbox_poly, texto, conf in deteccoes:
+                        print(f"    texto={texto!r} conf={conf:.2f} bbox={bbox_poly}")
+                elif modo_detector_only:
                     for det in deteccoes:
                         print(f"    bbox={det.bbox} det={det.confianca_det:.2f}")
                 else:

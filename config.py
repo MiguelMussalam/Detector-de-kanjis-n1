@@ -20,6 +20,7 @@ ASSETS_DIR      = os.path.join(ROOT_DIR, "assets")
 DATA_DIR        = os.path.join(ROOT_DIR, "data")
 WEIGHTS_DIR     = os.path.join(ROOT_DIR, "weights")
 FONTS_DIR       = os.path.join(ASSETS_DIR, "fonts")
+VISUAL_COMPARACAO_DIR = os.path.join(DATA_DIR, "comparacao_visual")
 
 
 def _buscar_manga109_diretorio():

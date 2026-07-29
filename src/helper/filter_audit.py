@@ -97,10 +97,15 @@ def _translacao(img, frac, rng):
     if frac == 0:
         return img
     h, w = img.shape
-    dx = int(w * frac) * rng.choice([-1, 1])
-    dy = int(h * frac) * rng.choice([-1, 1])
+    max_dx = int(w * frac)
+    max_dy = int(h * frac)
+    dx = max_dx * rng.choice([-1, 1])
+    dy = max_dy * rng.choice([-1, 1])
+    # recorte precisa ser MENOR que o canvas, reservando a folga do
+    # deslocamento -- mesmo fix aplicado em generate_crops.py (ver
+    # apply_translate_and_crop): sem isso a janela nao tem espaco pra deslizar.
+    crop_size = min(h - 2 * max_dy, w - 2 * max_dx)
     cx, cy = w // 2 + dx, h // 2 + dy
-    crop_size = min(h, w)
     x0 = max(0, min(w - crop_size, cx - crop_size // 2))
     y0 = max(0, min(h - crop_size, cy - crop_size // 2))
     return img[y0:y0 + crop_size, x0:x0 + crop_size]
@@ -215,17 +220,32 @@ def main():
         out_dir = os.path.join(FILTERS_DIR, nome)
         os.makedirs(out_dir, exist_ok=True)
 
+        # Amostras fixas (mesmo char/fonte/tamanho) por coluna -- sorteadas
+        # uma unica vez, reusadas em TODAS as severidades. Sem isso, cada
+        # severidade comparava kanji/fonte diferentes entre si, tornando
+        # efeitos sutis (ex: translacao) impossiveis de perceber visualmente
+        # -- a linha de uma severidade nunca era o "mesmo kanji" da anterior.
+        amostras_fixas = [(
+            rng.choice(n1),
+            rng.choice(fonts),
+            rng.choices(CLASSIFIER_FONT_SIZES, weights=CLASSIFIER_FONT_SIZE_WEIGHTS)[0],
+        ) for _ in range(args.n_metricas)]
+
         imagens_para_grid = []
         linhas_csv = []
 
         for sev in severidades:
             imagens_sev = []
-            for i in range(args.n_metricas):
-                char = rng.choice(n1)
-                font_path = rng.choice(fonts)
-                font_size = rng.choices(CLASSIFIER_FONT_SIZES, weights=CLASSIFIER_FONT_SIZE_WEIGHTS)[0]
+            for i, (char, font_path, font_size) in enumerate(amostras_fixas):
+                # RNG proprio por coluna, re-semeado igual a cada severidade --
+                # garante que a UNICA coisa que muda de uma severidade pra
+                # outra, pra essa coluna, seja a severidade em si (direcao/sinal
+                # aleatorios do filtro e escolha de fundo ficam identicos entre
+                # severidades, isolando so o efeito da severidade).
+                rng_amostra = random.Random(9000 + i)
+                np.random.seed(9000 + i)
 
-                img_final, mask = gerar_amostra(sev, antes_fundo, func, char, font_path, font_size, rng)
+                img_final, mask = gerar_amostra(sev, antes_fundo, func, char, font_path, font_size, rng_amostra)
                 if i < args.n_grid:
                     imagens_sev.append(img_final)
 

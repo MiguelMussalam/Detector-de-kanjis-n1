@@ -27,6 +27,7 @@ from config import (
     CLF_BATCH_SIZE, CLF_NUM_WORKERS,
     CLF_OUTROS_LABEL,
     ROOT_DIR,
+    VISUAL_COMPARACAO_DIR,
 )
 from src.classifier.model import build_model
 from src.classifier.dataset import build_datasets, build_transform, index_to_kanji
@@ -175,11 +176,17 @@ def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
     Salva:
       - {out_dir}/confusoes.csv: pra cada kanji com erro, top-3 classes mais
         confundidas + contagem + % dos erros daquela classe.
-      - {out_dir}/confusoes_visual.png: grade de ~n_exemplos crops errados,
-        imagem original (não normalizada) + rótulo verdadeiro/previsto.
+      - {VISUAL_COMPARACAO_DIR}/nosso_pipeline.png: grade de ~n_exemplos crops
+        errados, imagem original (não normalizada) + rótulo verdadeiro/previsto.
     """
     print("\n=== Análise de confusão (val sintético) ===")
-    _, val_ds = build_datasets()
+    # So precisa do val (nao do train) -- monta direto em vez de build_datasets(),
+    # que exige train/val com o mesmo conjunto de classes (checagem pensada pro
+    # treino de verdade, nao se aplica aqui: o split de treino local pode estar
+    # em qualquer estado, ex: um subconjunto de teste, sem afetar essa analise).
+    from config import CLASSIFIER_VAL_DIR
+    from torchvision.datasets import ImageFolder
+    val_ds = ImageFolder(root=CLASSIFIER_VAL_DIR, transform=build_transform())
 
     if val_ds.classes != classes:
         raise RuntimeError(
@@ -239,47 +246,29 @@ def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
         writer.writerows(linhas_csv)
     print(f"[INFO] Tabela de confusao salva em: {csv_path}")
 
-    # Grade visual de exemplos errados (imagem original, nao normalizada)
+    # Grade visual de exemplos errados (imagem original, nao normalizada).
+    # Pre-amostra os ERROS (tuplas leves) antes de abrir imagem nenhuma -- evita
+    # Image.open() em milhares de crops que a amostragem ia descartar de qualquer jeito.
+    png_path = None
     if erros:
-        import matplotlib.font_manager as fm
-        import matplotlib.pyplot as plt
-        from src.helper.fonts import get_fonts_list
-
-        # Fonte padrao do matplotlib (DejaVu Sans) nao tem glifo CJK -- titulo
-        # com kanji sairia com caixa vazia (mesmo tipo de problema de "tofu box"
-        # ja visto no gerador sintetico, aqui na hora de plotar). Reaproveita
-        # uma das fontes japonesas ja baixadas em assets/fonts/.
-        fontes = get_fonts_list()
-        fonte_cjk = fm.FontProperties(fname=fontes[0]) if fontes else None
+        from src.helper.grade_visual import salvar_grade_visual
 
         rng = random.Random(seed)
         amostra = rng.sample(erros, min(n_exemplos, len(erros)))
-        cols = 6
-        rows = (len(amostra) + cols - 1) // cols
-        fig, axes = plt.subplots(rows, cols, figsize=(2.2 * cols, 2.6 * rows))
-        axes_flat = axes.flat if len(amostra) > 1 else [axes]
+        itens = [{
+            "imagem": Image.open(val_ds.samples[idx_g][0]).convert("L"),
+            "titulo": (f"real: {index_to_kanji(classes, true_idx)} ({classes[true_idx]})\n"
+                       f"previsto: {index_to_kanji(classes, pred_idx)} ({classes[pred_idx]})"),
+            "cor": "red",
+            "cmap": "gray",
+        } for idx_g, true_idx, pred_idx in amostra]
 
-        for ax, (idx_g, true_idx, pred_idx) in zip(axes_flat, amostra):
-            img_path, _ = val_ds.samples[idx_g]
-            img = Image.open(img_path).convert("L")
-            titulo = (f"real: {index_to_kanji(classes, true_idx)} ({classes[true_idx]})\n"
-                      f"previsto: {index_to_kanji(classes, pred_idx)} ({classes[pred_idx]})")
-            ax.imshow(img, cmap="gray")
-            ax.set_title(titulo, color="red", fontsize=8, fontproperties=fonte_cjk)
-            ax.axis("off")
-
-        for ax in list(axes_flat)[len(amostra):]:
-            ax.axis("off")
-
-        plt.tight_layout()
-        png_path = os.path.join(out_dir, "confusoes_visual.png")
-        plt.savefig(png_path, dpi=120)
-        plt.close(fig)
-        print(f"[INFO] Grade visual salva em: {png_path}")
+        png_path = os.path.join(VISUAL_COMPARACAO_DIR, "nosso_pipeline.png")
+        salvar_grade_visual(itens, png_path, n=len(itens), seed=seed, cols=6, figsize_cel=(2.2, 2.6))
     else:
         print("[INFO] Nenhum erro no val sintetico -- nada pra visualizar.")
 
-    return {"n_erros": n_erros, "n_total": total, "csv": csv_path}
+    return {"n_erros": n_erros, "n_total": total, "csv": csv_path, "png": png_path}
 
 
 def main():
