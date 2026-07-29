@@ -258,7 +258,13 @@ def comparar_niveis_pizza(linhas: list, out_dir: str = OUT_DIR) -> dict:
     )
     ax.set_title("Participação de cada nível JLPT nas ocorrências N1-N5 no Manga109",
                 fontsize=13.5, color=_TINTA, fontweight="bold", pad=16)
-    fig.tight_layout()
+    n_classes_txt = " / ".join(f"{l['nivel']}={l['n_classes']}" for l in linhas)
+    fig.text(0.5, 0.02,
+            f"Fatia = soma bruta de ocorrências, não a média por kanji -- N1 tem muito mais classes\n"
+            f"distintas que os outros níveis ({n_classes_txt} classes), então mesmo sendo o nível mais\n"
+            f"raro POR kanji (ver gráfico de barras), a soma total ainda é grande.",
+            ha="center", fontsize=9, color=_TINTA_MUTED)
+    fig.tight_layout(rect=(0, 0.09, 1, 1))
     png_path = os.path.join(out_dir, "comparacao_niveis_pizza.png")
     fig.savefig(png_path, dpi=150, facecolor=_SUPERFICIE, bbox_inches="tight")
     plt.close(fig)
