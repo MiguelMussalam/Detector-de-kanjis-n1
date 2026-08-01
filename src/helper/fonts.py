@@ -1,29 +1,45 @@
+import io
 import os
 import glob
+import zipfile
 import requests
 from fontTools.ttLib import TTFont
 from src.helper.kanjis import get_kanjis
 from config import FONTES_URL, ASSETS_DIR, FONTS_DIR
 
 def download_fonts(fontes, diretorio_destino):
+    """
+    `fontes[nome]` pode ser uma URL direta do arquivo (.ttf/.otf, salvo como
+    está) ou uma tupla `(url_do_zip, caminho_dentro_do_zip)` -- algumas
+    fontes japonesas gratuitas (ex: a família 源暎 de okoneya.jp) só são
+    distribuídas em .zip, não como arquivo solto.
+    """
     os.makedirs(diretorio_destino, exist_ok=True)
 
-    for nome, url in fontes.items():
+    for nome, origem in fontes.items():
         caminho = os.path.join(diretorio_destino, f"{nome}.ttf")
 
         if os.path.exists(caminho):
             print(f"{nome} já existe, pulando")
             continue
 
+        url, caminho_no_zip = origem if isinstance(origem, tuple) else (origem, None)
+
         try:
             resposta = requests.get(url, timeout=30)
             resposta.raise_for_status()
 
+            if caminho_no_zip:
+                with zipfile.ZipFile(io.BytesIO(resposta.content)) as z:
+                    conteudo = z.read(caminho_no_zip)
+            else:
+                conteudo = resposta.content
+
             with open(caminho, "wb") as f:
-                f.write(resposta.content)
+                f.write(conteudo)
             print(f"baixada: {nome}")
 
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, KeyError, zipfile.BadZipFile) as e:
             print(f"erro: {nome}: {e}")
 
 def get_fonts_list():

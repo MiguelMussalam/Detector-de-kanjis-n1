@@ -72,10 +72,7 @@ KANJI_DATA_URL  = "https://raw.githubusercontent.com/davidluzgouveia/kanji-data/
 KANJI_DATA_CACHE = os.path.join(ASSETS_DIR, "kanji.json")
 FONTES_URL = {
     "Shippori Antique":         "https://raw.githubusercontent.com/fontdasu/ShipporiAntique/master/fonts/ttf/ShipporiAntique-Regular.ttf",
-    "BIZ-UDPGothic-Regular":    "https://raw.githubusercontent.com/google/fonts/main/ofl/bizudpgothic/BIZUDPGothic-Regular.ttf",
-    "BIZ-UDPMincho-Regular":    "https://raw.githubusercontent.com/google/fonts/main/ofl/bizudpmincho/BIZUDPMincho-Regular.ttf",
     "Klee-One-Regular":         "https://raw.githubusercontent.com/google/fonts/main/ofl/kleeone/KleeOne-Regular.ttf",
-    "Hina-Mincho-Regular":      "https://raw.githubusercontent.com/google/fonts/main/ofl/hinamincho/HinaMincho-Regular.ttf",
     "Yusei-Magic-Regular":      "https://raw.githubusercontent.com/google/fonts/main/ofl/yuseimagic/YuseiMagic-Regular.ttf",
     "Dela-Gothic-One":          "https://raw.githubusercontent.com/google/fonts/main/ofl/delagothicone/DelaGothicOne-Regular.ttf",
     "Reggae-One":               "https://raw.githubusercontent.com/google/fonts/main/ofl/reggaeone/ReggaeOne-Regular.ttf",
@@ -84,6 +81,23 @@ FONTES_URL = {
     "Kaisei-Tokumin-W5":        "https://raw.githubusercontent.com/Font-Kai/Kaisei-Tokumin/master/Fonts/ttf/FK-Kaisei-tokuminW5.ttf",
     "Hachi-Maru-Pop-Regular":   "https://raw.githubusercontent.com/noriokanisawa/HachiMaruPop/master/HachiMaruPop-Regular.ttf",
     "Stick-Regular":            "https://raw.githubusercontent.com/fontworks-fonts/Stick/master/fonts/ttf/Stick-Regular.ttf",
+    # BIZ-UDPGothic/BIZ-UDPMincho/Hina-Mincho removidas (2026-07-31): pesquisa de
+    # fontes reais de mangá confirmou que as tres sao de contexto errado -- BIZ UD e'
+    # design universal/acessibilidade da Morisawa pra documento empresarial/prefeitura/
+    # aeroporto, Hina Mincho e' decorativa inspirada em bonecas Hina -- nenhuma tem
+    # relacao com a convencao real de mangá (ver EXPERIMENTS.md). Substituidas pelas
+    # duas abaixo, que SAO desenhadas especificamente pra balao de fala de manga.
+    #
+    # Fontes 源暎 (okoneya.jp, SIL OFL) sao distribuidas em .zip -- o valor aqui e'
+    # (url_do_zip, caminho_do_arquivo_dentro_do_zip), tratado por download_fonts().
+    "GenEi-Antique-M": (
+        "http://okoneya.jp/font/GenEiAntique_v6.0a.zip",
+        "GenEiAntique_v6.0a/GenEiAntiqueNv6-M.ttf",
+    ),
+    "GenEi-Gothic-KL-H": (
+        "http://okoneya.jp/font/GenEiGothicKL-1.3.zip",
+        "GenEiGothicKL-1.3/GenEiGothicN-H-KL.otf",
+    ),
 }
 
 YOLO_MODEL      = _env("KD_YOLO_MODEL",  "yolo26n.pt")
@@ -240,7 +254,7 @@ CLF_MAX_TENTATIVAS_MORFO = _env("KD_CLF_MAX_TENTATIVAS_MORFO", 4)
 # grossa por design, ainda mais se a morfologia "dilate" (engrossar) for
 # sorteada em cima. Pra essas, só "erode" (afinar) é permitido.
 CLF_FONTES_PESADAS = [
-    "Dela-Gothic-One.ttf", "Reggae-One.ttf", "BIZ-UDPGothic-Bold.ttf",
+    "Dela-Gothic-One.ttf", "Reggae-One.ttf", "GenEi-Gothic-KL-H.ttf",
     "Stick-Regular.ttf", "Klee-One-SemiBold.ttf",
 ]
 
@@ -267,6 +281,14 @@ CLF_CONTRAST_PROB    = _env("KD_CLF_CONTRAST_PROB",    0.5)
 CLF_CONTRAST_RANGE   = _env("KD_CLF_CONTRAST_RANGE",   0.20)
 
 CLF_MORFO_PROB       = _env("KD_CLF_MORFO_PROB",       0.3)
+# Auditoria de degradacoes combinadas (src/helper/combinacao_filtros_audit.py,
+# 2026-07) achou que morfologia+translacao juntas sao desproporcionalmente
+# responsaveis pelas amostras que saem ilegiveis mesmo apos os retries (+32pp/
+# +23pp de presenca nas falhas vs. nos sucessos) -- cada uma isolada e segura
+# (filter_audit.py), mas a combinacao come a margem de legibilidade. Quando a
+# translacao ja disparou na amostra, a morfologia usa essa probabilidade
+# reduzida em vez de CLF_MORFO_PROB.
+CLF_MORFO_PROB_COM_TRANSLACAO = _env("KD_CLF_MORFO_PROB_COM_TRANSLACAO", 0.1)
 CLF_MORFO_K_MIN      = _env("KD_CLF_MORFO_K_MIN",      2)
 # k=3 auditado (src/helper/filter_audit.py) e caiu no penhasco de acuracia
 # especifico da erosao (92.5% em k=2 -> 40% em k=3, fill_ratio nao separa bem

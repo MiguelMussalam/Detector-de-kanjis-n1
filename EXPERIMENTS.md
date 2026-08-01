@@ -103,3 +103,45 @@ Não testado ainda (menor prioridade): variar `canvas_size`/`text_threshold`/`lo
 - Amostra de 50 páginas, não o corpus inteiro — suficiente pra confirmar a diferença (é grande demais pra ser ruído amostral), mas não é o número "oficial" em escala completa.
 - Só testado com EasyOCR — Tesseract (`jpn_vert`) fica como comparação secundária, não feita ainda por restrição de tempo.
 - **Lacuna identificada 2026-07-26**: a Hipótese 1 da proposta fala em recall de **detecção**, mas o teste atual isola reconhecimento (dá a bbox certa pro EasyOCR de graça). Falta um teste com o EasyOCR rodando detecção+reconhecimento próprios na página inteira (mesma amostra de 50 páginas), pra cobrir a hipótese como está literalmente escrita. Como o EasyOCR já perde feio mesmo com detecção de graça, a expectativa é que esse teste só amplie a diferença, não a reverta.
+
+## Degradações combinadas do classificador -- achado e correção (2026-07-27)
+
+`filter_audit.py` já mostrava cada uma das 9 degradações sintéticas segura isolada (97.5%+ até e além do limite de produção). Mas a geração real roda até 8 degradações independentes na mesma amostra (soma das probabilidades ≈ 4.4 disparando juntas, em média) -- hipótese: o problema real não é nenhum filtro isolado no limite, é a combinação, invisível pro `filter_audit.py` por desenho (sempre desliga os outros filtros).
+
+**Instrumentação** (`src/classifier/generate_crops.py`): parâmetro opcional `log: dict = None` adicionado em cada `apply_*`/função de composição/`generate_sample` (mesmo padrão do `avisos: list = None` já existente) -- registra quais degradações dispararam e com que severidade na amostra final, sem mudar nenhum comportamento quando `log=None`. Verificado: mesma seed com/sem `log` produz imagem byte-idêntica.
+
+**Nova ferramenta** `src/helper/combinacao_filtros_audit.py`: gera amostras via `generate_sample()` de verdade (não isolada), mede acurácia por "concorrência" (nº de degradações disparando juntas) e um enriquecimento por degradação (taxa de disparo em falhas vs. sucessos).
+
+**Achado (2000 amostras, baseline)**: a cifra de "~10-12%" no docstring de `generate_sample()` (uma calibração pontual de 200 amostras, ver seção do classificador) vira uma medida de verdade em escala: **9.9% ilegível** (sinal independente do modelo), **18.9% falha do classificador**. Acurácia cai de 100% (concorrência=1) pra 93% (concorrência=7) -- real, mas gradual. O enriquecimento aponta os culpados específicos: **morfologia (+32.2pp) e translação (+23.5pp)** desproporcionalmente presentes nas falhas -- blur/ruído, mesmo disparando mais, ficam sub-representados (efeito do fallback que desliga blur/ruído justamente nos casos mais difíceis, não porque sejam "protetores").
+
+**Correção**: nova constante `CLF_MORFO_PROB_COM_TRANSLACAO=0.1` (config.py) -- quando a translação já disparou na amostra, a morfologia usa essa probabilidade reduzida em vez de `CLF_MORFO_PROB=0.3`. Implementado sem mudar a ordem de aplicação dos pixels (morfologia continua antes do recorte): `_decidir_translacao()` decide o resultado da translação antes de chamar `apply_morphology`, e `apply_translate_and_crop` aceita esse resultado pré-decidido (`pre_decidido=`) pra não sortear duas vezes.
+
+**Resultado (2000 amostras, pós-fix)**:
+
+| Métrica | Antes | Depois |
+|---|---|---|
+| Ilegível (sinal independente) | 9.9% (199/2000) | **5.7% (114/2000)** |
+| Falha do classificador | 18.9% (378/2000) | **14.9% (298/2000)** |
+| Enriquecimento morfologia | +32.2pp | +13.5pp |
+| Enriquecimento translação | +23.5pp | +18.9pp |
+
+Acurácia por concorrência ficou estável em 95-98% do nível 1 ao 6 (só cai nos níveis 7-8, com n=43/n=3, amostra pequena demais pra confiar). Reduzir a coocorrência do par específico (não "reduzir tudo") cortou a taxa de ilegibilidade quase pela metade.
+
+**Pendência**: assim como o fix de translação (`apply_translate_and_crop`, achado anterior), essa correção só afeta a geração daqui pra frente -- o checkpoint atual foi treinado com a taxa antiga (~10%). Regenerar dado + retreinar fica como pendência conjunta com o fix de translação, decidido pra depois dado o prazo do projeto.
+
+## Auditoria das fontes sintéticas (2026-07-31)
+
+Pesquisa pra responder: as 13 fontes usadas na geração sintética (`config.py: FONTES_URL`) foram escolhidas com base em uso real de mangá, ou são "chute" de nome parecido? Cada uma pesquisada individualmente contra fontes/artigos sobre tipografia real de mangá japonês.
+
+**Achado principal**: o padrão real de diálogo de mangá comercial é a combinação **アンチゴチ** (kana em estilo アンチック + kanji em ゴシック grosso) -- ex: a revista *Manga Time Kirara* usa especificamente アンチックAN1 + 太ゴB101, ambas da fundição Morisawa, pagas por assinatura (Morisawa Fonts, ~¥54.780/ano/PC, sem redistribuição permitida).
+
+**Resultado da auditoria** (13 fontes):
+- **6 confirmadas de verdade**: Shippori Antique e Zen Antique (mesma família アンチック, uma citada nominalmente em lista curada por mangakás como fonte padrão de diálogo); Klee One, Reggae One e Stick (Fontworks de verdade -- fundição real de anime/mangá, liberaram 8 fontes grátis via Google Fonts/OFL); Hachi Maru Pop (aparece em duas listas curadas por mangakás, mangá infantil/retrô).
+- **4 plausíveis, não confirmadas por nome**: Dela Gothic One, Yusei Magic, Yuji Boku, Kaisei Tokumin -- estilos compatíveis (impacto/título, caligrafia de marcador, pincel real, título decorativo), mas sem confirmação direta de uso em mangá.
+- **3 fora de contexto -- removidas**: `BIZ-UDPGothic-Regular`, `BIZ-UDPMincho-Regular` (fontes de Design Universal/acessibilidade da Morisawa, feitas pra documento empresarial/prefeitura/aeroporto) e `Hina-Mincho-Regular` (decorativa, inspirada em bonecas Hina/Hinamatsuri, sem relação com mangá). Provavelmente escolhidas por nome parecido ("Gothic"/"Mincho" + japonesa + grátis), não por uso real confirmado.
+
+**Substituição**: as 3 removidas viraram **`GenEi-Antique-M`** e **`GenEi-Gothic-KL-H`**, da família 源暎 (okoneya.jp) -- licença SIL OFL 1.1 (aberta, uso comercial livre), e desenhadas especificamente pra reconstruir a estética アンチック de mangá de forma livre (アンチック combina Source Han Sans, 新コミック体, Linux Biolinum e GL-アンチック; a variante ゴシックKL é descrita explicitamente como feita pra balão de fala). `GenEi-Gothic-KL-H` (peso Heavy) entrou em `CLF_FONTES_PESADAS` no lugar de `BIZ-UDPGothic-Bold` (que nem chegou a estar em `FONTES_URL`, era um arquivo órfão já baixado antes).
+
+**Detalhe técnico**: essas duas fontes só são distribuídas em `.zip` (não como arquivo solto), diferente de todas as outras 11. `download_fonts()` (`src/helper/fonts.py`) ganhou suporte a isso -- `FONTES_URL[nome]` agora aceita `(url_do_zip, caminho_dentro_do_zip)` além de string simples, sem mudar o comportamento das fontes já existentes.
+
+Verificado: as duas cobrem 100% dos 1232 kanji N1 (`verify_fonts_compatibility`), renderização visual conferida (`data/pesquisa/preview_fontes_genei.png`), `pytest tests/` 32/32.

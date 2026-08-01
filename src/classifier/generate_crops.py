@@ -57,7 +57,7 @@ from config import (
     CLF_NOISE_PROB, CLF_NOISE_STD_MIN, CLF_NOISE_STD_MAX,
     CLF_BRIGHTNESS_PROB, CLF_BRIGHTNESS_RANGE,
     CLF_CONTRAST_PROB, CLF_CONTRAST_RANGE,
-    CLF_MORFO_PROB, CLF_MORFO_K_MIN, CLF_MORFO_K_MAX,
+    CLF_MORFO_PROB, CLF_MORFO_PROB_COM_TRANSLACAO, CLF_MORFO_K_MIN, CLF_MORFO_K_MAX,
     CLF_JPEG_PROB, CLF_JPEG_QUALITY_MIN, CLF_JPEG_QUALITY_MAX,
     CLF_ROTATION_PROB, CLF_ROTATION_MAX,
     CLF_OUTROS_LABEL, CLF_OUTROS_SAMPLES_TRAIN, CLF_OUTROS_SAMPLES_VAL,
@@ -90,7 +90,8 @@ def render_glyph(char: str, font_path: str, font_size: int,
     return np.array(canvas, dtype=np.uint8)
 
 
-def apply_morphology(img: np.ndarray, rng: random.Random, font_path: str = None) -> np.ndarray:
+def apply_morphology(img: np.ndarray, rng: random.Random, font_path: str = None,
+                     log: dict = None, reduzir_prob: bool = False) -> np.ndarray:
     """
     Dilate ou erode leve com kernel pequeno.
 
@@ -98,12 +99,32 @@ def apply_morphology(img: np.ndarray, rng: random.Random, font_path: str = None)
     "dilate" (engrossar ainda mais) é o que faz kanji com muitos traços
     grudarem numa mancha sólida (achado na auditoria visual). Pra essas, só
     "erode" (afinar) é permitido.
+
+    `log`: se um dict for passado, registra ali se disparou e com que
+    severidade (`morfologia_k`/`morfologia_op`, `None` se não disparou) --
+    usado por `src/helper/combinacao_filtros_audit.py` pra medir o efeito
+    combinado de várias degradações na mesma amostra. Não afeta o
+    comportamento quando `log=None` (default).
+
+    `reduzir_prob`: usa `CLF_MORFO_PROB_COM_TRANSLACAO` em vez de
+    `CLF_MORFO_PROB` -- passado como True quando a translação já disparou
+    nessa amostra (ver `_renderizar_base`). A auditoria de degradações
+    combinadas achou que morfologia+translação juntas respondem
+    desproporcionalmente pelas amostras que saem ilegíveis mesmo após os
+    retries, mesmo as duas sendo seguras isoladas (`filter_audit.py`).
     """
-    if rng.random() > CLF_MORFO_PROB:
+    prob = CLF_MORFO_PROB_COM_TRANSLACAO if reduzir_prob else CLF_MORFO_PROB
+    if rng.random() > prob:
+        if log is not None:
+            log["morfologia_k"] = None
+            log["morfologia_op"] = None
         return img
     k = rng.randint(CLF_MORFO_K_MIN, CLF_MORFO_K_MAX)
     eh_pesada = font_path is not None and os.path.basename(font_path) in CLF_FONTES_PESADAS
     op = "erode" if eh_pesada else rng.choice(["dilate", "erode"])
+    if log is not None:
+        log["morfologia_k"] = k
+        log["morfologia_op"] = op
     # Glyph é preto (0) sobre branco (255): a operação morfológica "dilate" (que
     # expandiria o preto em imagens normais) precisa ser grey_erosion aqui, e
     # vice-versa -- os nomes das funções do scipy pressupõem primeiro-plano claro.
@@ -113,16 +134,39 @@ def apply_morphology(img: np.ndarray, rng: random.Random, font_path: str = None)
         return grey_dilation(img, size=(k, k))
 
 
-def apply_rotation(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def apply_rotation(img: np.ndarray, rng: random.Random, log: dict = None) -> np.ndarray:
     if rng.random() > CLF_ROTATION_PROB:
+        if log is not None:
+            log["rotacao_graus"] = None
         return img
     angle = rng.uniform(-CLF_ROTATION_MAX, CLF_ROTATION_MAX)
+    if log is not None:
+        log["rotacao_graus"] = angle
     pil = Image.fromarray(img)
     pil = pil.rotate(angle, resample=Image.BILINEAR, fillcolor=255)
     return np.array(pil)
 
 
-def apply_translate_and_crop(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def _decidir_translacao(canvas_size: int, rng: random.Random) -> tuple:
+    """
+    Decide se a translação dispara e o deslocamento, SEPARADO de aplicar em
+    pixel -- permite `_renderizar_base` saber o resultado antes de decidir a
+    morfologia (ver `CLF_MORFO_PROB_COM_TRANSLACAO`), sem mudar a ordem em
+    que os pixels são de fato processados (morfologia continua aplicada
+    antes do recorte). `render_glyph` sempre gera canvas quadrado, então um
+    único `max_offset` serve pros dois eixos.
+    """
+    max_offset = int(canvas_size * CLF_TRANSLATE_MAX)
+    disparou = rng.random() <= CLF_TRANSLATE_PROB
+    if not disparou:
+        return False, 0, 0
+    dx = rng.randint(-max_offset, max_offset)
+    dy = rng.randint(-max_offset, max_offset)
+    return True, dx, dy
+
+
+def apply_translate_and_crop(img: np.ndarray, rng: random.Random, log: dict = None,
+                             pre_decidido: tuple = None) -> np.ndarray:
     """
     Desloca o glifo dentro do canvas e recorta -- simula bbox imperfeita do
     detector (kanji descentralizado no recorte).
@@ -134,16 +178,32 @@ def apply_translate_and_crop(img: np.ndarray, rng: random.Random) -> np.ndarray:
     dos casos, e um recorte de tamanho variável (não um deslocamento de
     verdade) na outra metade -- achado na auditoria visual (grade de
     "translacao" não mostrava nenhuma mudança perceptível entre severidades).
+
+    `pre_decidido`: se `(disparou, dx, dy)` for passado (ver
+    `_decidir_translacao`), usa esse resultado em vez de sortear -- evita
+    consumir o `rng` duas vezes quando quem chamou já precisou decidir a
+    translação antes (ver `_renderizar_base`).
     """
     h, w = img.shape
     max_dx = int(w * CLF_TRANSLATE_MAX)
     max_dy = int(h * CLF_TRANSLATE_MAX)
 
-    if rng.random() > CLF_TRANSLATE_PROB:
-        dx, dy = 0, 0
+    if pre_decidido is not None:
+        disparou, dx, dy = pre_decidido
     else:
-        dx = rng.randint(-max_dx, max_dx)
-        dy = rng.randint(-max_dy, max_dy)
+        disparou = rng.random() <= CLF_TRANSLATE_PROB
+        if not disparou:
+            dx, dy = 0, 0
+        else:
+            dx = rng.randint(-max_dx, max_dx)
+            dy = rng.randint(-max_dy, max_dy)
+
+    # Cuidado: logar o booleano `disparou` explicitamente, não inferir de
+    # dx==0/dy==0 -- um disparo que por acaso sorteia deslocamento zero fica
+    # indistinguível de "não disparou" se logar só a variável.
+    if log is not None:
+        log["translacao_dx"] = dx if disparou else None
+        log["translacao_dy"] = dy if disparou else None
 
     crop_size = min(h - 2 * max_dy, w - 2 * max_dx)
     cx = w // 2 + dx
@@ -160,39 +220,58 @@ def resize_to_target(img: np.ndarray, target: int) -> np.ndarray:
     return np.array(pil)
 
 
-def apply_blur(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def apply_blur(img: np.ndarray, rng: random.Random, log: dict = None) -> np.ndarray:
     if rng.random() > CLF_BLUR_PROB:
+        if log is not None:
+            log["blur_sigma"] = None
         return img
     sigma = rng.uniform(CLF_BLUR_SIGMA_MIN, CLF_BLUR_SIGMA_MAX)
+    if log is not None:
+        log["blur_sigma"] = sigma
     pil = Image.fromarray(img).filter(ImageFilter.GaussianBlur(radius=sigma))
     return np.array(pil)
 
 
-def apply_noise(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def apply_noise(img: np.ndarray, rng: random.Random, log: dict = None) -> np.ndarray:
     if rng.random() > CLF_NOISE_PROB:
+        if log is not None:
+            log["ruido_std"] = None
         return img
     std = rng.uniform(CLF_NOISE_STD_MIN, CLF_NOISE_STD_MAX) * 255
+    if log is not None:
+        log["ruido_std"] = std
     noise = np.random.normal(0, std, img.shape)
     out = img.astype(np.float32) + noise
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def apply_brightness_contrast(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def apply_brightness_contrast(img: np.ndarray, rng: random.Random, log: dict = None) -> np.ndarray:
     out = img.astype(np.float32)
+    if log is not None:
+        log["brilho_delta"] = None
+        log["contraste_fator"] = None
     if rng.random() < CLF_BRIGHTNESS_PROB:
         delta = rng.uniform(-CLF_BRIGHTNESS_RANGE, CLF_BRIGHTNESS_RANGE) * 255
+        if log is not None:
+            log["brilho_delta"] = delta
         out = out + delta
     if rng.random() < CLF_CONTRAST_PROB:
         factor = 1.0 + rng.uniform(-CLF_CONTRAST_RANGE, CLF_CONTRAST_RANGE)
+        if log is not None:
+            log["contraste_fator"] = factor
         mean = out.mean()
         out = (out - mean) * factor + mean
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def apply_jpeg(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def apply_jpeg(img: np.ndarray, rng: random.Random, log: dict = None) -> np.ndarray:
     if rng.random() > CLF_JPEG_PROB:
+        if log is not None:
+            log["jpeg_qualidade"] = None
         return img
     q = rng.randint(CLF_JPEG_QUALITY_MIN, CLF_JPEG_QUALITY_MAX)
+    if log is not None:
+        log["jpeg_qualidade"] = q
     pil = Image.fromarray(img)
     buf = io.BytesIO()
     pil.save(buf, format="JPEG", quality=q)
@@ -229,7 +308,7 @@ def _recortar_fundo(bg_full: np.ndarray, h: int, w: int, rng: random.Random) -> 
     return np.array(Image.fromarray(bg_full).resize((w, h), resample=Image.BILINEAR))
 
 
-def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
+def apply_paper_background(img: np.ndarray, rng: random.Random, log: dict = None) -> np.ndarray:
     """
     Aplica fundo real (recortado do Manga109, ver src/helper/harvest_backgrounds.py)
     quando o pool estiver disponível; cai para o fundo sintético (papel liso)
@@ -239,10 +318,15 @@ def apply_paper_background(img: np.ndarray, rng: random.Random) -> np.ndarray:
     fundo preto) -- do contrário o traço preto original fica invisível sobre
     o fundo preto. Fundo CLARO usa a mesma lógica de sempre (preserva o traço
     escuro, preenche o resto com o fundo).
+
+    Não é gated por probabilidade (sempre aplica um fundo) -- `log["fundo_escuro"]`
+    registra só qual pool foi escolhido, não se "disparou".
     """
     h, w = img.shape
 
     usar_escuro = rng.random() < CLF_BG_ESCURO_PROB
+    if log is not None:
+        log["fundo_escuro"] = usar_escuro
     fundos = _carregar_fundos_reais("escuro" if usar_escuro else "claro")
 
     if fundos:
@@ -324,35 +408,48 @@ def _legivel(img: np.ndarray, mask_glifo: np.ndarray) -> bool:
 
 
 def _aplicar_fundo_e_degradacoes(img_base: np.ndarray, rng: random.Random,
-                                 aplicar_blur_ruido: bool = True) -> np.ndarray:
+                                 aplicar_blur_ruido: bool = True, log: dict = None) -> np.ndarray:
     """Passos 6-10 (fundo + degradações finais), a partir do glifo já
     renderizado/posicionado. Separado pra permitir re-sortear só essa parte
     (ver generate_sample) sem re-sortear fonte/rotação/posição a cada tentativa."""
-    img = apply_paper_background(img_base.copy(), rng)
+    img = apply_paper_background(img_base.copy(), rng, log=log)
     if aplicar_blur_ruido:
-        img = apply_blur(img, rng)
-        img = apply_noise(img, rng)
-    img = apply_brightness_contrast(img, rng)
-    img = apply_jpeg(img, rng)
+        img = apply_blur(img, rng, log=log)
+        img = apply_noise(img, rng, log=log)
+    elif log is not None:
+        log["blur_sigma"] = None
+        log["ruido_std"] = None
+    img = apply_brightness_contrast(img, rng, log=log)
+    img = apply_jpeg(img, rng, log=log)
     return img
 
 
 def _renderizar_base(char: str, font_path: str, font_size: int,
-                     canvas_margin: float, rng: random.Random, output_size: int) -> np.ndarray:
+                     canvas_margin: float, rng: random.Random, output_size: int,
+                     log: dict = None) -> np.ndarray:
     """Render + degradações geométricas, antes do fundo/blur (separado do resto
-    do pipeline pra permitir retry só na parte final, ver generate_sample)."""
+    do pipeline pra permitir retry só na parte final, ver generate_sample).
+
+    Decide a translação ANTES da morfologia (sem mudar a ordem em que os
+    pixels são processados -- morfologia continua sendo aplicada primeiro)
+    pra poder reduzir a chance da morfologia quando a translação já vai
+    disparar na mesma amostra (ver CLF_MORFO_PROB_COM_TRANSLACAO)."""
     canvas_size = int(font_size * (1 + 2 * canvas_margin))
+    translacao_decidida = _decidir_translacao(canvas_size, rng)
+    disparou_translacao = translacao_decidida[0]
+
     img = render_glyph(char, font_path, font_size, canvas_size)
-    img = apply_morphology(img, rng, font_path=font_path)
-    img = apply_rotation(img, rng)
-    img = apply_translate_and_crop(img, rng)
+    img = apply_morphology(img, rng, font_path=font_path, log=log,
+                            reduzir_prob=disparou_translacao)
+    img = apply_rotation(img, rng, log=log)
+    img = apply_translate_and_crop(img, rng, log=log, pre_decidido=translacao_decidida)
     return resize_to_target(img, output_size)
 
 
 def generate_sample(char: str, font_path: str, font_size: int,
                     rng: random.Random, output_size: int,
                     canvas_margin: float, fonts_fallback: list = None,
-                    avisos: list = None) -> np.ndarray:
+                    avisos: list = None, log: dict = None) -> np.ndarray:
     """
     Gera um crop 64x64 do kanji com degradações aplicadas em ordem.
 
@@ -381,13 +478,25 @@ def generate_sample(char: str, font_path: str, font_size: int,
     print por ocorrência trava a renderização de output do notebook
     (Jupyter/Kaggle engasga com dezenas de milhares de linhas numa célula só).
     Se `avisos` for None (uso direto/sanity/teste), imprime na hora como antes.
+
+    `log`: se um dict for passado, registra quais degradações dispararam e
+    com que severidade na amostra FINAL (a que de fato é retornada -- como
+    cada tentativa sobrescreve as mesmas chaves e o loop para assim que uma
+    tentativa é aceita, o dict acaba refletindo só o perfil da imagem
+    entregue, não das tentativas descartadas), mais `tentativas_estagio2`
+    (quantas tentativas do passo fundo/blur/ruído foram usadas),
+    `usou_fallback_sem_blur_ruido` (bool) e `legivel_final` (bool, mesma
+    checagem de contraste/fill_ratio já usada abaixo). Usado por
+    `src/helper/combinacao_filtros_audit.py` pra medir o efeito de várias
+    degradações disparando juntas na mesma amostra -- não muda nenhum
+    comportamento quando `log=None` (default).
     """
-    img_base = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size)
+    img_base = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size, log=log)
     mask_glifo = img_base <= 240
 
     if not _legivel(img_base, mask_glifo):
         for _ in range(CLF_MAX_TENTATIVAS_MORFO):
-            img_try = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size)
+            img_try = _renderizar_base(char, font_path, font_size, canvas_margin, rng, output_size, log=log)
             mask_try = img_try <= 240
             if _legivel(img_try, mask_try):
                 img_base, mask_glifo = img_try, mask_try
@@ -397,22 +506,33 @@ def generate_sample(char: str, font_path: str, font_size: int,
                 alternativas = [f for f in fonts_fallback if f != font_path]
                 rng.shuffle(alternativas)
                 for alt in alternativas:
-                    img_alt = _renderizar_base(char, alt, font_size, canvas_margin, rng, output_size)
+                    img_alt = _renderizar_base(char, alt, font_size, canvas_margin, rng, output_size, log=log)
                     mask_alt = img_alt <= 240
                     if _legivel(img_alt, mask_alt):
                         img_base, mask_glifo = img_alt, mask_alt
                         break
 
-    for _ in range(CLF_MAX_TENTATIVAS):
-        candidato = _aplicar_fundo_e_degradacoes(img_base, rng)
+    for tentativa in range(CLF_MAX_TENTATIVAS):
+        candidato = _aplicar_fundo_e_degradacoes(img_base, rng, log=log)
         if (_contraste_glifo(candidato, mask_glifo) >= CLF_MIN_CONTRASTE and
                 CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(candidato, mask_glifo) <= CLF_MAX_FILL_RATIO):
+            if log is not None:
+                log["tentativas_estagio2"] = tentativa + 1
+                log["usou_fallback_sem_blur_ruido"] = False
+                log["legivel_final"] = True
             return candidato
 
     # Esgotou as tentativas -- abre mão de blur/ruído pra garantir legibilidade
-    fallback = _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False)
-    if (_contraste_glifo(fallback, mask_glifo) < CLF_MIN_CONTRASTE or
-            not (CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(fallback, mask_glifo) <= CLF_MAX_FILL_RATIO)):
+    fallback = _aplicar_fundo_e_degradacoes(img_base, rng, aplicar_blur_ruido=False, log=log)
+    legivel_final = (
+        _contraste_glifo(fallback, mask_glifo) >= CLF_MIN_CONTRASTE and
+        CLF_MIN_FILL_RATIO <= _fill_ratio_glifo(fallback, mask_glifo) <= CLF_MAX_FILL_RATIO
+    )
+    if log is not None:
+        log["tentativas_estagio2"] = CLF_MAX_TENTATIVAS
+        log["usou_fallback_sem_blur_ruido"] = True
+        log["legivel_final"] = legivel_final
+    if not legivel_final:
         msg = f"{char} / {os.path.basename(font_path)} @ {font_size}px"
         if avisos is not None:
             avisos.append(msg)

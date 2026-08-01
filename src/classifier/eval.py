@@ -176,6 +176,10 @@ def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
     Salva:
       - {out_dir}/confusoes.csv: pra cada kanji com erro, top-3 classes mais
         confundidas + contagem + % dos erros daquela classe.
+      - {out_dir}/acuracia_por_classe.csv: acurácia individual de TODAS as
+        1232 classes N1 (não só as que erraram) -- usado por
+        `src/pesquisa/frequencia_vs_acuracia.py` pra cruzar com a frequência
+        real de cada kanji no corpus Manga109.
       - {VISUAL_COMPARACAO_DIR}/nosso_pipeline.png: grade de ~n_exemplos crops
         errados, imagem original (não normalizada) + rótulo verdadeiro/previsto.
     """
@@ -200,13 +204,18 @@ def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
     )
 
     erros = []  # (indice_global, true_idx, pred_idx)
+    total_por_classe = Counter()
+    corretos_por_classe = Counter()
     idx_global = 0
     total = 0
     for imgs, labels in loader:
         imgs = imgs.to(device)
         preds = model(imgs).argmax(dim=1).cpu()
         for true_idx, pred_idx in zip(labels.tolist(), preds.tolist()):
-            if pred_idx != true_idx:
+            total_por_classe[true_idx] += 1
+            if pred_idx == true_idx:
+                corretos_por_classe[true_idx] += 1
+            else:
                 erros.append((idx_global, true_idx, pred_idx))
             idx_global += 1
             total += 1
@@ -245,6 +254,29 @@ def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
         writer.writeheader()
         writer.writerows(linhas_csv)
     print(f"[INFO] Tabela de confusao salva em: {csv_path}")
+
+    # Acuracia individual de TODAS as classes N1 (nao so quem errou) -- pra
+    # cruzar depois com a frequencia real no corpus (kanji raro no corpus
+    # tem acuracia pior, ou o sintetico compensa igual pra todo mundo?).
+    acuracia_path = os.path.join(out_dir, "acuracia_por_classe.csv")
+    with open(acuracia_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["kanji", "classe", "total_val", "corretos", "acuracia_pct"])
+        writer.writeheader()
+        for idx, classe in enumerate(classes):
+            if classe == CLF_OUTROS_LABEL:
+                continue
+            n_total = total_por_classe.get(idx, 0)
+            if n_total == 0:
+                continue
+            n_corretos = corretos_por_classe.get(idx, 0)
+            writer.writerow({
+                "kanji": index_to_kanji(classes, idx),
+                "classe": classe,
+                "total_val": n_total,
+                "corretos": n_corretos,
+                "acuracia_pct": round(100 * n_corretos / n_total, 1),
+            })
+    print(f"[INFO] Acuracia por classe salva em: {acuracia_path}")
 
     # Grade visual de exemplos errados (imagem original, nao normalizada).
     # Pre-amostra os ERROS (tuplas leves) antes de abrir imagem nenhuma -- evita
