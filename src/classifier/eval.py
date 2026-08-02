@@ -166,31 +166,21 @@ def eval_etl9(model, classes, device):
     return {"top1": acc1, "top5": acc5, "n": total, "cobertura": stats}
 
 
-@torch.no_grad()
-def eval_real_n1(model, classes, device):
+def carregar_real_n1(classes):
     """
-    Val real de N1 (src/helper/manga109_align_n1.py) -- crops reais do
-    Manga109, alinhados por heurística e filtrados por concordância com o
-    manga-ocr (ver docstring do script gerador e EXPERIMENTS.md "Validação
-    real de N1"). Ao contrário do val sintético, isso mede o que realmente
-    importa: acerto em kanji de mangá de verdade, não na distribuição do
-    próprio gerador -- é o sinal que deveria decidir qual checkpoint promover,
-    não só o val_acc sintético (ver EXPERIMENTS.md "Regressão do checkpoint
-    2026-08-01" para um caso real onde confiar só no val_acc sintético
-    escondeu uma regressão).
+    Lista (path, target_idx) do conjunto real de N1 (ver manga109_align_n1.py),
+    já mapeado pros índices de classe do checkpoint. Retorna None se o
+    diretório não existe (ainda não gerado). Separado de `avaliar_real_n1`
+    pra quem chama a cada época (train.py) poder listar os arquivos uma vez
+    só, não a cada chamada.
     """
-    print("\n=== Val real de N1 (Manga109 alinhado + manga-ocr) ===")
     from glob import glob
     from config import MANGA109_ALIGN_N1_DIR
 
     if not os.path.isdir(MANGA109_ALIGN_N1_DIR):
-        print(f"[AVISO] {MANGA109_ALIGN_N1_DIR} não existe -- rode "
-              f"'python -m src.helper.manga109_align_n1' primeiro. Pulando.")
         return None
 
     class_to_idx = {c: i for i, c in enumerate(classes)}
-    transform = build_transform()
-
     paths, target_idxs = [], []
     for codepoint_dir in sorted(os.listdir(MANGA109_ALIGN_N1_DIR)):
         idx = class_to_idx.get(codepoint_dir)
@@ -199,9 +189,27 @@ def eval_real_n1(model, classes, device):
         for p in glob(os.path.join(MANGA109_ALIGN_N1_DIR, codepoint_dir, "*.png")):
             paths.append(p)
             target_idxs.append(idx)
+    return paths, target_idxs
 
-    print(f"Amostras: {len(paths)} | Classes cobertas: {len(set(target_idxs))}")
 
+@torch.no_grad()
+def avaliar_real_n1(model, classes, device, dados=None):
+    """
+    Núcleo de avaliação no conjunto real de N1 -- sem print, retorna None se
+    o conjunto não existe. `dados` (saída de `carregar_real_n1`) pode ser
+    passado pronto pra evitar relistar o diretório a cada chamada (usado por
+    train.py, uma vez por época). Se omitido, carrega na hora (uso avulso,
+    ver `eval_real_n1`).
+    """
+    if dados is None:
+        dados = carregar_real_n1(classes)
+    if dados is None:
+        return None
+    paths, target_idxs = dados
+    if not paths:
+        return None
+
+    transform = build_transform()
     correct_top1 = 0
     correct_top5 = 0
     errors_by_class = Counter()
@@ -226,16 +234,45 @@ def eval_real_n1(model, classes, device):
                 errors_by_class[classes[idx]] += 1
 
     total = len(paths)
-    acc1 = correct_top1 / max(1, total)
-    acc5 = correct_top5 / max(1, total)
-    print(f"Top-1 accuracy: {acc1:.4f} ({acc1*100:.2f}%)")
-    print(f"Top-5 accuracy: {acc5:.4f} ({acc5*100:.2f}%)")
+    return {
+        "top1": correct_top1 / total,
+        "top5": correct_top5 / total,
+        "n": total,
+        "n_classes": len(set(target_idxs)),
+        "errors_by_class": errors_by_class,
+    }
+
+
+def eval_real_n1(model, classes, device):
+    """
+    Val real de N1 (src/helper/manga109_align_n1.py) -- crops reais do
+    Manga109, alinhados por heurística e filtrados por concordância com o
+    manga-ocr (ver docstring do script gerador e EXPERIMENTS.md "Validação
+    real de N1"). Ao contrário do val sintético, isso mede o que realmente
+    importa: acerto em kanji de mangá de verdade, não na distribuição do
+    próprio gerador -- é o sinal que deveria decidir qual checkpoint promover,
+    não só o val_acc sintético (ver EXPERIMENTS.md "Regressão do checkpoint
+    2026-08-01" para um caso real onde confiar só no val_acc sintético
+    escondeu uma regressão). Wrapper com relatório em cima de `avaliar_real_n1`.
+    """
+    print("\n=== Val real de N1 (Manga109 alinhado + manga-ocr) ===")
+    from config import MANGA109_ALIGN_N1_DIR
+
+    r = avaliar_real_n1(model, classes, device)
+    if r is None:
+        print(f"[AVISO] {MANGA109_ALIGN_N1_DIR} não existe (ou está vazio) -- rode "
+              f"'python -m src.helper.manga109_align_n1' primeiro. Pulando.")
+        return None
+
+    print(f"Amostras: {r['n']} | Classes cobertas: {r['n_classes']}")
+    print(f"Top-1 accuracy: {r['top1']:.4f} ({r['top1']*100:.2f}%)")
+    print(f"Top-5 accuracy: {r['top5']:.4f} ({r['top5']*100:.2f}%)")
 
     print("\nTop 10 classes com mais erros:")
-    for codepoint, n_err in errors_by_class.most_common(10):
+    for codepoint, n_err in r["errors_by_class"].most_common(10):
         print(f"  {codepoint}: {n_err} erros")
 
-    return {"top1": acc1, "top5": acc5, "n": total}
+    return {"top1": r["top1"], "top5": r["top5"], "n": r["n"]}
 
 
 @torch.no_grad()

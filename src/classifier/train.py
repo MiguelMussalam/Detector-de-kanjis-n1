@@ -7,6 +7,16 @@ Roda localmente (CPU) ou no Kaggle (GPU). Local é viável só para testes rápi
 com poucas épocas/classes — o treino real (30 épocas, 1232 classes) deve
 rodar em GPU (Kaggle T4), senão o tempo por época fica proibitivo.
 
+Seleção do best.pt: usa o val real de N1 (src/helper/manga109_align_n1.py,
+via src.classifier.eval.avaliar_real_n1) quando o conjunto existir em
+MANGA109_ALIGN_N1_DIR, não o val_acc sintético -- ver EXPERIMENTS.md
+"Validação real de N1" pro porquê (val sintético já mascarou uma regressão
+de recall real por medir só a distribuição do próprio gerador). O val
+sintético continua decidindo o *early stopping* (patience), que precisa de
+um sinal estável época a época; o real_n1 cobre só uma fração das classes e
+seria ruidoso demais pra essa decisão. Sem o conjunto real gerado, cai de
+volta pro comportamento antigo (best.pt pelo val_acc sintético).
+
 Uso:
     python -m src.classifier.train
 """
@@ -28,6 +38,7 @@ from config import (
 )
 from src.classifier.dataset import build_datasets, build_dataloaders
 from src.classifier.model import build_model, count_parameters
+from src.classifier.eval import carregar_real_n1, avaliar_real_n1
 
 
 IS_KAGGLE = (
@@ -87,6 +98,22 @@ def main():
     num_classes = len(train_ds.classes)
     print(f"[INFO] {len(train_ds)} treino / {len(val_ds)} val / {num_classes} classes")
 
+    # Val real de N1 (src/helper/manga109_align_n1.py) -- usado só pra ESCOLHER
+    # o best.pt (ver EXPERIMENTS.md "Validação real de N1"). O val sintético
+    # continua sendo quem decide o early stopping (patience) -- o real tem só
+    # uma fração das 1232 classes e poucas amostras por classe, ruidoso demais
+    # pra decidir "convergiu ou não" época a época, mas é o sinal certo pra
+    # decidir QUAL época salvar como checkpoint final.
+    real_n1_dados = carregar_real_n1(train_ds.classes)
+    if real_n1_dados is None or not real_n1_dados[0]:
+        print("[AVISO] Conjunto real de N1 não encontrado -- rode "
+              "'python -m src.helper.manga109_align_n1' antes do treino pra "
+              "escolher o best.pt pelo sinal real. Caindo de volta pro val_acc "
+              "sintético (comportamento antigo).")
+        real_n1_dados = None
+    else:
+        print(f"[INFO] Val real de N1: {len(real_n1_dados[0])} amostras carregadas")
+
     print(f"[INFO] Construindo modelo (stem_leve={CLF_STEM_LEVE}, "
           f"label_smoothing={CLF_LABEL_SMOOTHING})...")
     model = build_model(num_classes=num_classes).to(DEVICE)
@@ -119,9 +146,10 @@ def main():
     log_path = os.path.join(run_dir, "results.csv")
 
     with open(log_path, "w", encoding="utf-8") as f:
-        f.write("epoch,train_loss,train_acc,val_loss,val_acc,lr\n")
+        f.write("epoch,train_loss,train_acc,val_loss,val_acc,real_n1_acc,lr\n")
 
-    best_val_acc = 0.0
+    best_val_acc = 0.0          # decide early stopping (patience) -- val sintético
+    best_selecao_acc = 0.0      # decide o best.pt -- real_n1 quando disponível, senão val_acc
     epochs_sem_melhora = 0
 
     print(f"[INFO] Treinando por ate {CLF_EPOCHS} epocas (patience={CLF_PATIENCE})")
@@ -132,23 +160,33 @@ def main():
         val_loss, val_acc = _run_epoch(model, val_loader, criterion, optimizer=None)
         scheduler.step()
 
+        real_n1_result = None
+        if real_n1_dados is not None:
+            real_n1_result = avaliar_real_n1(model, train_ds.classes, DEVICE, dados=real_n1_dados)
+        metrica_selecao = real_n1_result["top1"] if real_n1_result else val_acc
+
         dt = time.time() - t0
         lr_atual = scheduler.get_last_lr()[0]
+        real_n1_str = f"real_n1_acc={real_n1_result['top1']:.4f} | " if real_n1_result else ""
         print(
             f"[{epoch:03d}/{CLF_EPOCHS}] "
             f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} | "
             f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} | "
+            f"{real_n1_str}"
             f"lr={lr_atual:.2e} | {dt:.1f}s"
         )
 
+        real_n1_csv = f"{real_n1_result['top1']:.6f}" if real_n1_result else ""
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"{epoch},{train_loss:.6f},{train_acc:.6f},{val_loss:.6f},{val_acc:.6f},{lr_atual:.8f}\n")
+            f.write(f"{epoch},{train_loss:.6f},{train_acc:.6f},{val_loss:.6f},{val_acc:.6f},"
+                    f"{real_n1_csv},{lr_atual:.8f}\n")
 
         checkpoint = {
             "model_state": model.state_dict(),
             "classes": train_ds.classes,
             "epoch": epoch,
             "val_acc": val_acc,
+            "real_n1_acc": real_n1_result["top1"] if real_n1_result else None,
             # stride/Identity do stem_leve nao aparecem no state_dict (nao sao
             # peso, so config de forward) -- sem guardar isso aqui, carregar o
             # checkpoint em outra maquina/sessao (onde CLF_STEM_LEVE local
@@ -159,18 +197,31 @@ def main():
         }
         torch.save(checkpoint, last_path)
 
+        # Patience: baseado no val sintético (estável, roda em 100% das classes
+        # -- o real_n1 só cobre uma fração, ruidoso demais pra decidir "parou
+        # de convergir" época a época).
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             epochs_sem_melhora = 0
-            torch.save(checkpoint, best_path)
-            print(f"          -> novo melhor val_acc: {val_acc:.4f} (salvo em {best_path})")
         else:
             epochs_sem_melhora += 1
-            if epochs_sem_melhora >= CLF_PATIENCE:
-                print(f"[INFO] Early stopping: sem melhora ha {CLF_PATIENCE} epocas.")
-                break
 
-    print(f"\n[INFO] Treino concluido! Melhor val_acc: {best_val_acc:.4f}")
+        # Seleção do best.pt: usa o real_n1 quando disponível (ver
+        # EXPERIMENTS.md "Validação real de N1" -- é o sinal que reflete o
+        # mundo real, o val_acc sintético já mascarou uma regressão de
+        # verdade antes por só medir a distribuição do próprio gerador).
+        if metrica_selecao > best_selecao_acc:
+            best_selecao_acc = metrica_selecao
+            torch.save(checkpoint, best_path)
+            fonte = "real_n1_acc" if real_n1_result else "val_acc (fallback, sem real_n1)"
+            print(f"          -> novo melhor {fonte}: {metrica_selecao:.4f} (salvo em {best_path})")
+
+        if epochs_sem_melhora >= CLF_PATIENCE:
+            print(f"[INFO] Early stopping: sem melhora no val sintético ha {CLF_PATIENCE} epocas.")
+            break
+
+    print(f"\n[INFO] Treino concluido! Melhor val_acc: {best_val_acc:.4f} | "
+          f"Melhor metrica de selecao do best.pt: {best_selecao_acc:.4f}")
     print(f"[INFO] Pesos e log em: {run_dir}")
 
 
