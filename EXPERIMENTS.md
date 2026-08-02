@@ -194,3 +194,42 @@ crop_size = min(h - 2 * max_dy, w - 2 * max_dx) if disparou else min(h, w)
 ```
 
 **Decisão**: aplicado só esse fix por enquanto, `CLF_MORFO_PROB_COM_TRANSLACAO` mantido em 0.1 -- isolar uma variável por vez no próximo retreino, em vez de mudar duas coisas ao mesmo tempo de novo (foi assim que a causa real ficou mascarada desta vez). `weights/classifier_best.pt` revertido pro checkpoint anterior (`weights/backups/classifier_2026-07-23.pt`, 86.78%) até um retreino com este fix confirmar recuperação do recall.
+
+## Validação real de N1 (2026-08-02)
+
+Investigando a regressão acima, surgiu uma pergunta mais estrutural: `train.py` escolhe `best.pt` só pelo `val_acc` **sintético** (`if val_acc > best_val_acc`, ver `src/classifier/train.py`) -- e esse val é 100% gerado pelo mesmo pipeline sintético do treino. Se o gerador tiver qualquer viés sistemático (como o bug do crop acima, que tornou o sintético "mais fácil" sem refletir a realidade), a seleção de checkpoint fica cega a isso -- foi exatamente o que mascarou a regressão desta vez.
+
+### Por que não dava pra simplesmente anotar caixas de N1 na mão
+
+Manga109 só anota bbox de **linha/balão inteiro** + transcrição -- não tem anotação por caractere. `manga109_align.py` já infere a correspondência caractere↔caixa por heurística (conta caixas do nosso detector == caracteres da string, agrupa por coluna de leitura), mas descarta N1 de propósito (só usa pra OUTROS) porque cobertura por classe é baixa (mediana 1 exemplo/classe numa amostra de 6 volumes) e um erro de alinhamento pode contaminar a única amostra real daquela classe.
+
+Auditoria visual confirmou o problema é real: ~6% dos crops N1 alinhados sem filtro tinham rótulo claramente errado (ex: caixa de 10-20px rotulada com um kanji de 16 traços, mas o crop era só um traço solto ou uma marca espúria -- o detector errou uma caixa em algum ponto da linha, e como o total de caixas ainda batia com o total de caracteres, o zip caractere↔caixa saiu deslocado a partir do erro sem disparar nenhuma checagem de contagem).
+
+### Testando um segundo modelo como filtro
+
+Cogitou-se usar EasyOCR/Tesseract pra confirmar o rótulo de cada crop antes de aceitar. **Descartado**: são justamente os baselines que o projeto já provou fracos nesse domínio (14.7%/25.4% de recall) -- usar como filtro descartaria a maioria do dado BOM (medido: **57% de falso positivo** em 14 crops presumivelmente corretos) e enviesaria o conjunto resultante pro que essas ferramentas genéricas conseguem ler, exatamente o oposto do que a Hipótese 1 do projeto quer medir.
+
+Testado então o **manga-ocr** (kha-white/manga-ocr-base, Transformer especializado em texto de mangá, não é um dos baselines comparados pelo projeto): mesmo teste, **~17% de falso positivo** (2/12, e os dois casos, inspecionados de perto, eram crops corretos que o manga-ocr só leu errado -- não erros de alinhamento). Nos 2 erros de alinhamento conhecidos, pegou os dois (leu hiragana solto tipo 'ひ'/'ま' em vez do kanji complexo esperado -- consistente com serem detecções espúrias mesmo).
+
+Escalado pra 30 volumes: de 1260 crops brutos, 954 aceitos (75.7%), 332 classes cobertas. Auditoria visual de 64 aceitos: **nenhum erro encontrado**. Auditoria dos rejeitados: ~metade eram erros reais de alinhamento (confirma o filtro funciona), ~metade eram crops corretos que o manga-ocr errou (filtro é conservador -- perde dado bom, não deixa passar dado ruim, o trade-off certo pra um conjunto de validação).
+
+### Infraestrutura criada
+
+- `src/helper/manga109_align_n1.py` (novo): mesma heurística de `manga109_align.py`, mas guarda N1 em vez de descartar, aceitando só quando o manga-ocr concorda com o rótulo. Sem split train/val (nunca é usado pra treino, sem risco de vazamento). Saída em `data/classifier_real_n1/{U+XXXX}/*.png`.
+- `src/classifier/eval.py`: nova função `eval_real_n1()` + `--only real_n1`, mede top-1/top-5 nesse conjunto real, incluída no "avaliar tudo" default junto de `synth`/`etl9`.
+- `config.py`: `MANGA109_ALIGN_N1_DIR`.
+- `requirements.txt`: `manga-ocr`.
+
+**Rodado em escala completa (109 volumes, 10.602 páginas)**: 4861 crops brutos, **3675 aceitos (75.6%)**, cobrindo **637 das 1232 classes N1 (51.7%)**.
+
+### Resultado -- confirma a regressão com muito mais precisão que os testes anteriores
+
+| Checkpoint | Top-1 real N1 (3675 amostras, 637 classes) | Top-5 |
+|---|---|---|
+| **07-23 (ativo, 15 épocas, sem bug do crop)** | **98.42%** | 100.00% |
+| candidato do fix (6 épocas, bug corrigido, sub-treinado) | 96.30% | 99.67% |
+| 08-01 (regredido, 18 épocas, com bug do crop) | 95.46% | 99.48% |
+
+A queda do checkpoint regredido (98.42%→95.46%, **-2.96pp**) bate de perto com os -2.55pp medidos no full-corpus do Kaggle (86.78%→84.23%) -- essa validação real, que roda em **segundos** (não ~85min de GPU), reproduziu o mesmo sinal de forma barata. O candidato com o fix do crop já recupera **+0.84pp** sobre o regredido mesmo com menos de um terço do treino (6 vs 18 épocas) -- sinal de que o fix ajuda de verdade; a diferença restante pro ativo (-2.12pp) é mais provável de ser sub-treino do que um problema novo, a confirmar quando esse retreino rodar até convergir.
+
+**Daqui pra frente**: esse é o sinal que deveria decidir promoção de checkpoint, não o `val_acc` sintético sozinho -- `eval.py` já avisa isso no resumo comparativo quando os dois estão disponíveis.

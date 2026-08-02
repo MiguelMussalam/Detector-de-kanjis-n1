@@ -15,6 +15,7 @@ bitstring
 pytest
 easyocr
 pytesseract
+manga-ocr
 https://github.com/CaptainDario/ETLCDB_data_reader/releases/download/v2.1.4/etl_data_reader_CaptainDario-2.1.4-py3-none-any.whl
 # opencv-python tem que ser instalado POR ULTIMO: easyocr traz opencv-python-headless
 # como dependencia, e os dois pacotes escrevem no mesmo modulo cv2 -- quem instala por

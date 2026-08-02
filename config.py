@@ -382,6 +382,16 @@ MANGA109_ALIGN_DATA_DIR   = os.path.join(DATA_DIR, "classifier_real")
 MANGA109_ALIGN_TRAIN_DIR  = os.path.join(MANGA109_ALIGN_DATA_DIR, "train")
 MANGA109_ALIGN_VAL_DIR    = os.path.join(MANGA109_ALIGN_DATA_DIR, "val")
 
+# Conjunto de validação real de N1 (src/helper/manga109_align_n1.py) -- só
+# validação, nunca treino, então sem split train/val (não há risco de
+# vazamento). Diferente de MANGA109_ALIGN_*_DIR (que descarta N1 de
+# propósito, ver docstring de manga109_align.py), aqui N1 é o alvo: cada
+# crop alinhado só é aceito se um segundo modelo independente (manga-ocr,
+# especializado em mangá -- ver EXPERIMENTS.md "Validação real de N1") ler
+# o mesmo caractere do rótulo da heurística, o que reduziu o erro residual
+# de alinhamento de ~6% pra ~0% numa amostra de auditoria visual.
+MANGA109_ALIGN_N1_DIR = os.path.join(DATA_DIR, "classifier_real_n1")
+
 # Split por volume (não por página/crop, para não vazar dado de val no treino).
 # Mesmo conjunto de 10 volumes historicamente usado como val do Manga109
 # (Ogawa et al., 2018), com KarakuriDouji trocado por KarappoHighschool —

@@ -4,11 +4,15 @@ eval.py
 Avaliação sistemática do classificador em múltiplos val sets:
   1. Val sintético held-out (o mesmo usado durante o treino)
   2. ETL9B filtrado por N1 (proxy fora do domínio — manuscrito real)
+  3. Val real de N1 (Manga109 alinhado + filtrado por manga-ocr — ver
+     src/helper/manga109_align_n1.py). Esse é o sinal que mais importa pra
+     decidir qual checkpoint promover -- os outros dois são proxies.
 
 Uso:
-    python -m src.classifier.eval                 # avalia em tudo
-    python -m src.classifier.eval --only synth    # só sintético
-    python -m src.classifier.eval --only etl9     # só ETL9
+    python -m src.classifier.eval                  # avalia em tudo
+    python -m src.classifier.eval --only synth      # só sintético
+    python -m src.classifier.eval --only etl9       # só ETL9
+    python -m src.classifier.eval --only real_n1    # só val real de N1
 """
 
 import argparse
@@ -163,6 +167,78 @@ def eval_etl9(model, classes, device):
 
 
 @torch.no_grad()
+def eval_real_n1(model, classes, device):
+    """
+    Val real de N1 (src/helper/manga109_align_n1.py) -- crops reais do
+    Manga109, alinhados por heurística e filtrados por concordância com o
+    manga-ocr (ver docstring do script gerador e EXPERIMENTS.md "Validação
+    real de N1"). Ao contrário do val sintético, isso mede o que realmente
+    importa: acerto em kanji de mangá de verdade, não na distribuição do
+    próprio gerador -- é o sinal que deveria decidir qual checkpoint promover,
+    não só o val_acc sintético (ver EXPERIMENTS.md "Regressão do checkpoint
+    2026-08-01" para um caso real onde confiar só no val_acc sintético
+    escondeu uma regressão).
+    """
+    print("\n=== Val real de N1 (Manga109 alinhado + manga-ocr) ===")
+    from glob import glob
+    from config import MANGA109_ALIGN_N1_DIR
+
+    if not os.path.isdir(MANGA109_ALIGN_N1_DIR):
+        print(f"[AVISO] {MANGA109_ALIGN_N1_DIR} não existe -- rode "
+              f"'python -m src.helper.manga109_align_n1' primeiro. Pulando.")
+        return None
+
+    class_to_idx = {c: i for i, c in enumerate(classes)}
+    transform = build_transform()
+
+    paths, target_idxs = [], []
+    for codepoint_dir in sorted(os.listdir(MANGA109_ALIGN_N1_DIR)):
+        idx = class_to_idx.get(codepoint_dir)
+        if idx is None:
+            continue  # classe fora do que esse checkpoint conhece (raro)
+        for p in glob(os.path.join(MANGA109_ALIGN_N1_DIR, codepoint_dir, "*.png")):
+            paths.append(p)
+            target_idxs.append(idx)
+
+    print(f"Amostras: {len(paths)} | Classes cobertas: {len(set(target_idxs))}")
+
+    correct_top1 = 0
+    correct_top5 = 0
+    errors_by_class = Counter()
+
+    for i in range(0, len(paths), CLF_BATCH_SIZE):
+        batch_paths = paths[i:i + CLF_BATCH_SIZE]
+        batch_targets = target_idxs[i:i + CLF_BATCH_SIZE]
+
+        tensors = [transform(Image.open(p).convert("L")) for p in batch_paths]
+        x = torch.stack(tensors).to(device)
+        target_idx = torch.tensor(batch_targets, dtype=torch.long, device=device)
+
+        logits = model(x)
+        top5 = logits.topk(5, dim=1).indices
+
+        correct_mask = (top5[:, 0] == target_idx)
+        correct_top1 += correct_mask.sum().item()
+        correct_top5 += (top5 == target_idx.unsqueeze(1)).any(dim=1).sum().item()
+
+        for idx, ok in zip(batch_targets, correct_mask.cpu().tolist()):
+            if not ok:
+                errors_by_class[classes[idx]] += 1
+
+    total = len(paths)
+    acc1 = correct_top1 / max(1, total)
+    acc5 = correct_top5 / max(1, total)
+    print(f"Top-1 accuracy: {acc1:.4f} ({acc1*100:.2f}%)")
+    print(f"Top-5 accuracy: {acc5:.4f} ({acc5*100:.2f}%)")
+
+    print("\nTop 10 classes com mais erros:")
+    for codepoint, n_err in errors_by_class.most_common(10):
+        print(f"  {codepoint}: {n_err} erros")
+
+    return {"top1": acc1, "top5": acc5, "n": total}
+
+
+@torch.no_grad()
 def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
                    n_exemplos: int = 30, seed: int = 42):
     """
@@ -305,7 +381,7 @@ def eval_confusoes(model, classes, device, out_dir: str = CLF_EVAL_DIR,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["synth", "etl9", "confusao"], default=None,
+    parser.add_argument("--only", choices=["synth", "etl9", "real_n1", "confusao"], default=None,
                         help="Avaliar apenas um dos conjuntos. 'confusao' so roda se "
                              "explicitamente pedido (nao faz parte do 'avaliar tudo' default).")
     parser.add_argument("--weights", type=str, default=CLF_WEIGHTS_PATH,
@@ -330,21 +406,33 @@ def main():
     if args.only in (None, "etl9"):
         results["etl9"] = eval_etl9(model, classes, device)
 
+    if args.only in (None, "real_n1"):
+        r = eval_real_n1(model, classes, device)
+        if r is not None:
+            results["real_n1"] = r
+
     if len(results) > 1:
         print("\n" + "=" * 50)
         print("Resumo comparativo")
         print("=" * 50)
         for name, r in results.items():
-            print(f"  {name:6s}: top-1 = {r['top1']*100:.2f}%  |  n = {r['n']}")
+            print(f"  {name:8s}: top-1 = {r['top1']*100:.2f}%  |  n = {r['n']}")
 
-        gap = results["synth"]["top1"] - results["etl9"]["top1"]
-        print(f"\nGap sintético -> ETL9: {gap*100:.2f} pontos")
-        if gap < 0.15:
-            print("  -> Modelo generaliza bem entre domínios.")
-        elif gap < 0.30:
-            print("  -> Gap moderado; sugere aumentar variedade de fontes ou domain randomization.")
-        else:
-            print("  -> Gap severo; modelo aprendeu features específicas de fonte, não de kanji.")
+        if "etl9" in results:
+            gap = results["synth"]["top1"] - results["etl9"]["top1"]
+            print(f"\nGap sintético -> ETL9: {gap*100:.2f} pontos")
+            if gap < 0.15:
+                print("  -> Modelo generaliza bem entre domínios.")
+            elif gap < 0.30:
+                print("  -> Gap moderado; sugere aumentar variedade de fontes ou domain randomization.")
+            else:
+                print("  -> Gap severo; modelo aprendeu features específicas de fonte, não de kanji.")
+
+        if "real_n1" in results:
+            gap_real = results["synth"]["top1"] - results["real_n1"]["top1"]
+            print(f"\nGap sintético -> real N1 (Manga109): {gap_real*100:.2f} pontos")
+            print("  -> Esse é o sinal que deveria decidir qual checkpoint promover, "
+                  "não o val_acc sintético sozinho (ver EXPERIMENTS.md).")
 
 
 if __name__ == "__main__":
