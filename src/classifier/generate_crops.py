@@ -171,13 +171,21 @@ def apply_translate_and_crop(img: np.ndarray, rng: random.Random, log: dict = No
     Desloca o glifo dentro do canvas e recorta -- simula bbox imperfeita do
     detector (kanji descentralizado no recorte).
 
-    O recorte precisa ser MENOR que o canvas de entrada, reservando de
-    propósito a folga usada pelo deslocamento. Sem essa folga (recorte do
-    tamanho do canvas inteiro), a janela não tem espaço pra deslizar: o clamp
-    sempre volta pro mesmo lugar e o "deslocamento" vira um no-op na metade
-    dos casos, e um recorte de tamanho variável (não um deslocamento de
-    verdade) na outra metade -- achado na auditoria visual (grade de
-    "translacao" não mostrava nenhuma mudança perceptível entre severidades).
+    Quando a translação dispara, o recorte precisa ser MENOR que o canvas de
+    entrada, reservando de propósito a folga usada pelo deslocamento. Sem
+    essa folga (recorte do tamanho do canvas inteiro), a janela não tem
+    espaço pra deslizar: o clamp sempre volta pro mesmo lugar e o
+    "deslocamento" vira um no-op na metade dos casos, e um recorte de tamanho
+    variável (não um deslocamento de verdade) na outra metade -- achado na
+    auditoria visual (grade de "translacao" não mostrava nenhuma mudança
+    perceptível entre severidades).
+
+    Quando NÃO dispara, o recorte fica no tamanho cheio do canvas (sem
+    encolher) -- reservar a folga incondicionalmente (mesmo sem deslocamento)
+    reenquadrava o glifo mais apertado em 100% das amostras (~77%->~96% do
+    frame com os valores de produção), não só nas que translacionam de
+    verdade -- mudança de escala sistemática no dataset inteiro, descoberta
+    ao investigar uma queda de recall no corpus real após um retreino.
 
     `pre_decidido`: se `(disparou, dx, dy)` for passado (ver
     `_decidir_translacao`), usa esse resultado em vez de sortear -- evita
@@ -205,7 +213,7 @@ def apply_translate_and_crop(img: np.ndarray, rng: random.Random, log: dict = No
         log["translacao_dx"] = dx if disparou else None
         log["translacao_dy"] = dy if disparou else None
 
-    crop_size = min(h - 2 * max_dy, w - 2 * max_dx)
+    crop_size = min(h - 2 * max_dy, w - 2 * max_dx) if disparou else min(h, w)
     cx = w // 2 + dx
     cy = h // 2 + dy
     x0 = max(0, min(w - crop_size, cx - crop_size // 2))
