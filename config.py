@@ -366,6 +366,14 @@ ETL9_DIR         = _env("KD_ETL9_DIR", os.path.join(DATA_DIR, "etl9"))
 # Qual versão usar: "ETL9B" (binário, mais leve, 5 arquivos) ou "ETL9G" (grayscale, mais fiel, 50 arquivos)
 ETL9_VERSION     = _env("KD_ETL9_VERSION", "ETL9G")
 
+# Tesseract: segundo baseline de OCR tradicional (ver src/helper/ocr_baseline_compare.py
+# --engine tesseract). Binário de sistema, não pip -- instalado via winget
+# (UB-Mannheim.TesseractOCR) local. TESSDATA_DIR fica fora de Program Files de
+# propósito (jpn.traineddata/jpn_vert.traineddata baixados ali por não ter
+# permissão de admin pra escrever direto no tessdata do instalador).
+TESSERACT_CMD    = _env("KD_TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+TESSDATA_DIR     = _env("KD_TESSDATA_DIR", os.path.join(DATA_DIR, "tessdata"))
+
 # Alinhamento Manga109: gera negativos reais pra classe OUTROS (não N1, ver
 # src/helper/manga109_align.py), deduzindo o rótulo de cada caractere real
 # a partir da transcrição das falas do Manga109 (<text>) cruzada com as
