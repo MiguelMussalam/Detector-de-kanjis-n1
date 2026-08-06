@@ -233,3 +233,28 @@ Escalado pra 30 volumes: de 1260 crops brutos, 954 aceitos (75.7%), 332 classes 
 A queda do checkpoint regredido (98.42%→95.46%, **-2.96pp**) bate de perto com os -2.55pp medidos no full-corpus do Kaggle (86.78%→84.23%) -- essa validação real, que roda em **segundos** (não ~85min de GPU), reproduziu o mesmo sinal de forma barata. O candidato com o fix do crop já recupera **+0.84pp** sobre o regredido mesmo com menos de um terço do treino (6 vs 18 épocas) -- sinal de que o fix ajuda de verdade; a diferença restante pro ativo (-2.12pp) é mais provável de ser sub-treino do que um problema novo, a confirmar quando esse retreino rodar até convergir.
 
 **Daqui pra frente**: esse é o sinal que deveria decidir promoção de checkpoint, não o `val_acc` sintético sozinho -- `eval.py` já avisa isso no resumo comparativo quando os dois estão disponíveis.
+
+### `train.py` passa a escolher o `best.pt` pelo real_n1 (2026-08-02)
+
+`carregar_real_n1`/`avaliar_real_n1` refatorados de `eval.py` pra serem chamados também a cada época do treino, não só depois. `best.pt` agora é salvo pela acurácia no `real_n1` (quando o conjunto existe), não mais só pelo `val_acc` sintético -- o *early stopping* (paciência) continua baseado no sintético, mais estável com poucas amostras por classe do `real_n1`. Sem o conjunto gerado, cai de volta sozinho pro comportamento antigo. Notebook `02_classifier_train.ipynb` ganhou a célula que gera esse conjunto antes do treino, reusando o Manga109 já anexado.
+
+### Achado: colapso pra OUTROS em dado real -- atalho de domínio via mistura real/sintético (2026-08-02)
+
+Primeiro retreino monitorado com o `real_n1_acc` ao vivo revelou algo novo: `val_acc` sintético em 98%+ e subindo normalmente, mas `real_n1_acc` preso entre 1-14% por 14 épocas, sem tendência de melhora mesmo com o sintético já saturado (`train_acc`≈100%). Diagnóstico (`errors_by_class` + previsões agregadas): o modelo previa **OUTROS em 95.4%** de todos os crops reais de N1, com confiança alta (88-92%) -- e **100% dos erros** eram "devia ser um kanji N1 específico, previu OUTROS". Crucial: nos **4.6%** de casos em que o modelo arriscava um kanji N1 específico (não OUTROS), acertava **100% das vezes** (169/169) -- ou seja, a capacidade de distinguir kanji estava intacta, só o portão OUTROS-vs-N1 estava quebrado especificamente em imagem real.
+
+**Hipótese**: `merge_real_data.py` mescla dado real do Manga109 só na classe OUTROS (N1 continua 100% sintético, decisão histórica de 2026-07-11/12). Isso cria uma pista espúria: "parece foto/scan real (não render sintético limpo)" vira um atalho quase perfeito pra prever OUTROS, já que só essa classe tem exemplo real no treino -- o modelo não precisa aprender a reconhecer o traço, só a origem da imagem.
+
+**Teste**: notebook ganhou o toggle `OUTROS_REAL_MIX` (Célula 1) -- com `False`, pula a mesclagem do real e o OUTROS fica 100% sintético igual N1, sem mudar nenhum código. Resultado, comparando o checkpoint com o atalho (14 épocas, OUTROS misto) vs. o novo (só 5 épocas, OUTROS 100% sintético):
+
+| | OUTROS misto (14 épocas) | OUTROS sintético (5 épocas) |
+|---|---|---|
+| `real_n1_acc` | 4.60% | **96.98%** |
+| Previu OUTROS em crop real de N1 | 95.4% | **2.7%** |
+| Acerto quando arrisca um kanji | 100% (só 4.6% das vezes) | **99.6%** (97.3% das vezes) |
+| **Amostra local, pipeline completo** (50 páginas/252 pares, mesma de sempre) | -- | **89.7%** (226/252) -- melhor recall já medido no projeto |
+
+O checkpoint com OUTROS sintético, com **menos de um terço do treino** (5 de 30 épocas, ainda não convergiu), já supera o recall do checkpoint de referência totalmente treinado (07-23, 88.1% na mesma amostra). Confirma a hipótese do atalho de domínio com evidência forte, não só correlação.
+
+**Trade-off em aberto**: a taxa de OUTROS na amostra caiu um pouco (87.5% vs ~92-93% histórico) -- pode ser só sub-treino, ou pode ser o risco que a mudança introduz (sem negativo real, talvez rejeite pior confusores reais que genuinamente não são N1; `real_n1` não mede isso, só testa se kanji N1 de verdade é reconhecido). Vale conferir de novo quando o treino terminar, e considerar um teste complementar específico pra "taxa de rejeição correta de não-N1 real" antes de fechar a decisão definitivamente.
+
+**Pendência**: deixar esse treino (`OUTROS_REAL_MIX=False`) rodar até convergir ou até o early stopping disparar, depois decidir promoção com o quadro completo.
