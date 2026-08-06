@@ -138,6 +138,27 @@ CER (`recorte`, texto completo, mesma amostra): Tesseract 79.1% (2377/3005 ediç
 
 Sem grade visual de auditoria específica pro Tesseract nesta rodada (mesma metodologia e amostra já auditadas visualmente pro EasyOCR bastam pra validar que a comparação é justa); grade salva em `data/comparacao_visual/tesseract.png` para reanálise futura. Dado linha-a-linha em `data/corpus_validation/ocr_baseline_detalhe_tesseract.csv` (`recorte`) e `..._tesseract_pagina.csv` (`pagina`).
 
+### Terceiro motor: manga-ocr, especializado (não é baseline da Hipótese 1) (2026-08-05)
+
+`ocr_baseline_compare.py` ganhou um terceiro motor (`--engine mangaocr`, kha-white/manga-ocr-base) -- diferente de EasyOCR/Tesseract (generalistas, os baselines que a Hipótese 1 formalmente compara), é especializado em texto de mangá. Não substitui a comparação com os dois genéricos, complementa: testa se a conclusão (OCR tradicional perde pro pipeline próprio) também vale contra uma ferramenta que já é do domínio certo. Mesma amostra de 50 páginas/252 pares:
+
+| Sistema | `recorte` (bbox dada) | `pagina` (detecção + reconhecimento próprios) |
+|---|---|---|
+| **Nosso pipeline** (checkpoint 2026-08-05) | — | **89.7%** (226/252) |
+| EasyOCR | 14.7% (37/252) | 9.9% (25/252) |
+| Tesseract | 25.4% (64/252) | 11.5% (29/252) |
+| **manga-ocr** | **93.3%** (235/252) | **0.0%** (0/252) |
+
+CER (`recorte`): manga-ocr 15.1% (453/3005 edições) -- muito abaixo de EasyOCR (94.9%) e Tesseract (79.1%), na mesma faixa do nosso pipeline.
+
+**Leitura em duas partes, não uma conclusão só**:
+1. **Reconhecimento** (`recorte`, bbox dada de graça): manga-ocr é forte de verdade -- 93.3%, levemente acima até do nosso pipeline (89.7%). Confirma que especialização de domínio (mangá) importa muito mais que a arquitetura genérica em si -- a Hipótese 1 não é "toda ferramenta de OCR é ruim nisso", é "ferramenta **genérica** é ruim nisso". Uma ferramenta especializada de terceiros já resolve bem essa parte específica.
+2. **Fim-a-fim** (`pagina`, sem bbox de graça): manga-ocr zera. Ele não tem detecção própria -- é um recognizer puro, feito pra receber uma região de fala já recortada (por design, não é um bug nem uma limitação injusta de teste). Jogar a página inteira nele é fora do que ele foi treinado pra fazer; ele "lê" a página toda como se fosse um bloco de texto só, sem achar as linhas.
+
+**Conclusão**: a contribuição do projeto não é "reconhecer melhor que qualquer OCR" -- é entregar detecção **e** reconhecimento juntos, resolvendo o problema fim-a-fim sem depender de outra ferramenta pra achar onde está o texto. manga-ocr sozinho não é uma alternativa viável pro caso de uso (precisaria ser pareado com um detector de qualquer forma -- inclusive o nosso), mas mostra que o "motor de leitura" ideal já existe pra quem só precisa da etapa de reconhecimento com bbox conhecido.
+
+Grade visual em `data/comparacao_visual/mangaocr.png`. Dado linha-a-linha em `data/corpus_validation/ocr_baseline_detalhe_mangaocr.csv` (`recorte`) e `..._mangaocr_pagina.csv` (`pagina`).
+
 ## Degradações combinadas do classificador -- achado e correção (2026-07-27)
 
 `filter_audit.py` já mostrava cada uma das 9 degradações sintéticas segura isolada (97.5%+ até e além do limite de produção). Mas a geração real roda até 8 degradações independentes na mesma amostra (soma das probabilidades ≈ 4.4 disparando juntas, em média) -- hipótese: o problema real não é nenhum filtro isolado no limite, é a combinação, invisível pro `filter_audit.py` por desenho (sempre desliga os outros filtros).

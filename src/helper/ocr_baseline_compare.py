@@ -8,8 +8,11 @@ tarefa: reconhecer kanji N1 em linhas de diálogo reais do Manga109.
 Testa a Hipótese 1 da proposta formal da IC ("YOLOv8 terá mAP/recall
 superior a ferramentas de OCR tradicionais na detecção de Kanjis N1").
 
-Dois motores (`--engine`): `easyocr` (padrão) ou `tesseract` (segundo baseline,
-reforça a conclusão sem depender de uma única ferramenta -- ver EXPERIMENTS.md).
+Três motores (`--engine`): `easyocr` (padrão), `tesseract` (segundo baseline,
+reforça a conclusão sem depender de uma única ferramenta -- ver EXPERIMENTS.md)
+e `mangaocr` (kha-white/manga-ocr-base, especializado em texto de mangá --
+não é um dos baselines que a Hipótese 1 compara, testa se a conclusão também
+vale contra uma ferramenta já especializada no domínio, não só genéricas).
 Tesseract precisa estar instalado no sistema (não é pip) com `jpn_vert.traineddata`
 disponível (ver `TESSERACT_CMD`/`TESSDATA_DIR` em config.py).
 
@@ -116,6 +119,19 @@ def _construir_leitor(engine: str):
         pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
         print(f"[INFO] Usando Tesseract ({TESSERACT_CMD}, tessdata={TESSDATA_DIR})")
         return lambda img: pytesseract.image_to_string(img, lang="jpn_vert")
+
+    if engine == "mangaocr":
+        # Especializado em texto de manga (kha-white/manga-ocr-base) --
+        # diferente do EasyOCR/Tesseract (generalistas), nao e' um dos
+        # baselines que a Hipotese 1 da proposta compara -- serve pra
+        # verificar se a conclusao (OCR tradicional perde pro pipeline
+        # proprio) tambem vale contra uma ferramenta ja especializada no
+        # dominio, nao so contra ferramentas genericas.
+        print("[INFO] Carregando manga-ocr...")
+        from manga_ocr import MangaOcr
+        from PIL import Image
+        mocr = MangaOcr()
+        return lambda img: mocr(Image.fromarray(img).convert("RGB"))
 
     raise ValueError(f"Motor de OCR desconhecido: {engine}")
 
@@ -335,9 +351,10 @@ def main():
     parser.add_argument("--volumes", type=str, default=None, help="lista separada por virgula")
     parser.add_argument("--limit-volumes", type=int, default=None)
     parser.add_argument("--sample-paginas-por-volume", type=int, default=None)
-    parser.add_argument("--engine", choices=["easyocr", "tesseract"], default="easyocr",
+    parser.add_argument("--engine", choices=["easyocr", "tesseract", "mangaocr"], default="easyocr",
                         help="Motor de OCR. 'tesseract' precisa estar instalado no sistema "
-                             "(nao e' pip) com jpn_vert.traineddata disponivel.")
+                             "(nao e' pip) com jpn_vert.traineddata disponivel. 'mangaocr' e' "
+                             "especializado em texto de manga, nao e' baseline da Hipotese 1.")
     parser.add_argument("--modo", choices=["recorte", "pagina"], default="recorte",
                         help="'recorte' = bbox da linha dada de graca (isola reconhecimento). "
                              "'pagina' = o motor acha o texto sozinho na pagina inteira "
