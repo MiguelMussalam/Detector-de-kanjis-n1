@@ -38,10 +38,15 @@ A validação completa no Kaggle (109 volumes, GPU) rodou a **0.587s/página** �
 
 | Data | Detector | Classificador | Métrica | Recall agregado | OUTROS | Duração |
 |---|---|---|---|---|---|---|
+| **2026-08-06** | `best.pt` (mAP@50 0.81) | `classifier_best.pt` -- `OUTROS_REAL_MIX=False`, só época 5/30 (ativo) | multiset | **85.63%** (37288/43547) | 88.6% | 84.4 min |
 | 2026-07-25 | `best.pt` (mAP@50 0.81) | `classifier_best.pt` com `stem_leve` | **multiset (corrigida)** | **86.78%** (37789/43547) | 92.3% | 83.5 min (0.587s/pág, Kaggle GPU) |
 | 2026-08-01 (revertido) | `best.pt` (mAP@50 0.81) | `classifier_2026-08-01_regressao.pt` (não é o ativo, ver nota) | multiset | 84.23% (36680/43547) | 93.7% | 84.4 min |
 | 2026-07-19 | `best.pt` (mAP@50 0.81) | `classifier_2026-07-19.pt` (sem stem_leve) | set deduplicado (antiga) | 82.69% (35234/42611) | 88.1% | 93.5 min |
 | 2026-07-15 | `detector_2026-07-18.pt`/anterior (mAP@50 ~0.64-0.74) | mesmo de cima | set deduplicado (antiga) | 77.99% (33233/42611) | 88.0% | ~92 min |
+
+**Checkpoint ativo desde 2026-08-06, decisão consciente com número pior em recall bruto**: o full-corpus oficial do checkpoint `OUTROS_REAL_MIX=False` (ver seção "Achado: colapso pra OUTROS em dado real") deu **85.63%**, **1.15pp abaixo** dos 86.78% do checkpoint anterior (2026-07-25) -- inverte o que a amostra local de 50 páginas sugeria (89.7% vs 88.1%), mesma lição do dry-run de 3 volumes de antes: amostra pequena pode enganar, mesmo sendo 10x maior. Quebra de misses (6259 total): 28.0% detector / 72.0% classificador.
+
+A causa provável não é o `OUTROS_REAL_MIX=False` em si ter piorado o modelo -- é que esse checkpoint só treinou **5 de 30 épocas** (o treino não foi continuado até convergir, horas de GPU do Kaggle da semana foram usadas nesta validação full-corpus em vez de mais treino). Decisão: manter esse checkpoint como ativo mesmo assim, porque os outros sinais (`real_n1_acc` 96.98% vs 4.60%, rejeição de não-N1 real 95.2%) mostram uma generalização genuinamente melhor e mais bem validada -- o recall bruto 1.15pp menor é o preço de um modelo sub-treinado, não evidência de que a mudança foi errada. Checkpoint anterior (2026-07-25, 86.78%) preservado em `weights/backups/classifier_2026-07-23.pt` -- se der tempo/GPU de continuar esse treino até convergir num ciclo futuro, a expectativa é que ele supere os 86.78% também em recall bruto, não só nos sinais de generalização.
 
 **Nota metodológica**: a linha de 2026-07-25 muda métrica E checkpoint do classificador ao mesmo tempo em relação à linha de 2026-07-19 — não é uma comparação de variável única. Mas como o multiset é uma contagem mais **rigorosa** que o set deduplicado (nunca infla recall, só corrige a inflação anterior — ver nota de 2026-07-19 abaixo), ver o número subir mesmo assim (82.69%→86.78%) é um resultado mais forte do que uma leitura ingênua sugere, não mais fraco.
 
@@ -281,7 +286,7 @@ O checkpoint com OUTROS sintético, com **menos de um terço do treino** (5 de 3
 
 **Promovido em 2026-08-05** (`weights/classifier_best.pt`), ainda na época 5/30 -- o treino seguia rodando no Kaggle, mas o resultado já era claramente o melhor do projeto (89.7% na amostra local vs 88.1% do checkpoint anterior totalmente treinado), então não fazia sentido esperar pra registrar isso como o ativo. Checkpoint anterior preservado em `weights/backups/classifier_2026-07-23.pt`.
 
-**Pendências**: (1) validação full-corpus oficial (109 volumes) quando o treino terminar de convergir -- hoje só temos a amostra de 50 páginas; ~~(2) teste de rejeição de não-N1 real~~ **fechada em 2026-08-06, ver abaixo**.
+~~**Pendências**: (1) validação full-corpus oficial (109 volumes) quando o treino terminar de convergir; (2) teste de rejeição de não-N1 real~~ **as duas fechadas em 2026-08-06** -- full-corpus deu 85.63% (ver seção "Pipeline completo" acima, checkpoint mantido ativo mesmo com recall bruto 1.15pp menor, decisão consciente); rejeição de não-N1 real deu 95.2%, ver seção própria abaixo.
 
 ### GPU local habilitada (2026-08-06)
 
