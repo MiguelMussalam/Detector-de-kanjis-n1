@@ -281,4 +281,31 @@ O checkpoint com OUTROS sintético, com **menos de um terço do treino** (5 de 3
 
 **Promovido em 2026-08-05** (`weights/classifier_best.pt`), ainda na época 5/30 -- o treino seguia rodando no Kaggle, mas o resultado já era claramente o melhor do projeto (89.7% na amostra local vs 88.1% do checkpoint anterior totalmente treinado), então não fazia sentido esperar pra registrar isso como o ativo. Checkpoint anterior preservado em `weights/backups/classifier_2026-07-23.pt`.
 
-**Pendências**: (1) validação full-corpus oficial (109 volumes) quando o treino terminar de convergir -- hoje só temos a amostra de 50 páginas; (2) teste de rejeição de não-N1 real (não medido ainda -- `real_n1` só testa se kanji N1 verdadeiro é reconhecido, não se algo real que NÃO é N1 é corretamente rejeitado, que é o trade-off levantado ao tirar o real do OUTROS).
+**Pendências**: (1) validação full-corpus oficial (109 volumes) quando o treino terminar de convergir -- hoje só temos a amostra de 50 páginas; ~~(2) teste de rejeição de não-N1 real~~ **fechada em 2026-08-06, ver abaixo**.
+
+### GPU local habilitada (2026-08-06)
+
+Descoberto que a máquina local tem uma GPU (RTX 3050 Laptop, 6GB) com driver instalado, mas o PyTorch instalado era a build **CPU-only** -- todo teste local desta sessão (ETL9, `real_n1`, `corpus_validate` de amostra, confusão, `manga109_align_n1.py`) rodou em CPU sem precisar. Reinstalado com `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130 --force-reinstall --no-deps` (ver `requirements.txt`). `pytest` (32 testes) confirma que nada quebrou com a troca. Não afeta o Kaggle (já vem com CUDA pronto) -- só acelera avaliação/inferência local sem gastar hora de GPU do Kaggle.
+
+### ETL9 do checkpoint ativo (2026-08-06)
+
+Nunca tinha sido medido pro checkpoint bom (só existia pro regredido, 4.89%, sem contexto). Rodado com GPU local:
+
+| Checkpoint | Top-1 ETL9 | Top-5 |
+|---|---|---|
+| Ativo (2026-08-05, `OUTROS_REAL_MIX=False`) | **10.48%** | 28.17% |
+| 08-01 regredido (referência, contexto ruim) | 4.89% | -- |
+| Diagnóstico original 2026-07-07 (modelo bem mais fraco/antigo) | 11.56% | -- |
+
+Na mesma faixa do diagnóstico original, bem acima do regredido. Não é alarmante -- ETL9 é kanji **manuscrito**, domínio bem diferente do que `real_n1` testa (mangá impresso real, só muda o suporte/scan, não o traço). O modelo generaliza bem pro domínio-alvo (mangá real) sem necessariamente generalizar pra caligrafia à mão -- são duas formas diferentes de "fora da distribuição sintética", não a mesma pergunta.
+
+### Teste de rejeição de não-N1 real (2026-08-06) -- fecha o trade-off do OUTROS sintético
+
+Constrói o espelho do `real_n1`: em vez de "acerta kanji N1 real", mede "rejeita corretamente (prevê OUTROS) um caractere real que NÃO é N1". Reusa a heurística de `manga109_align.py` só pra avaliação (sem gravar em disco, sem mesclar em treino). Amostra: 20 volumes, 1965 páginas, **37.681 crops reais não-N1**.
+
+| Resultado | Valor |
+|---|---|
+| Rejeitou corretamente (previu OUTROS) | **95.2%** (35881/37681) |
+| Falso positivo (previu algum N1 específico) | 4.8% (1800/37681) |
+
+**Leitura**: existe sim um custo real em trocar o OUTROS pra 100% sintético -- 4.8% de falso positivo não é zero. Mas é um custo pequeno frente ao ganho: recall de N1 real saltou de 4.60%→96.98% (`real_n1`) e o recall do pipeline completo subiu de 88.1%→89.7% na mesma amostra. O trade-off vale a pena, e fica documentado com número, não só hipótese. Falsos positivos concentrados em algumas classes específicas (U+4E59 88x, U+53E5 61x, U+4F8D 36x, ...) -- não é ruído uniforme, sugere confusões visuais específicas, possível alvo de investigação futura se sobrar tempo.

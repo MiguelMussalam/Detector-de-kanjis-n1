@@ -10,6 +10,11 @@ scipy
 matplotlib
 torch
 torchvision
+# Local com GPU NVIDIA: o pip acima instala a build CPU-only por padrao no
+# Windows. Pra usar a GPU local em inferencia/avaliacao (Kaggle ja vem com
+# CUDA pronto, isso e' so pra rodar local), reinstalar com o indice certo:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130 --force-reinstall --no-deps
+# (troque cu130 pela build disponivel pra sua versao -- ver download.pytorch.org/whl/torch/)
 jaconv
 bitstring
 pytest
