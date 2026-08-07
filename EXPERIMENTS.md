@@ -156,6 +156,8 @@ Sem grade visual de auditoria específica pro Tesseract nesta rodada (mesma meto
 
 CER (`recorte`): manga-ocr 15.1% (453/3005 edições) -- muito abaixo de EasyOCR (94.9%) e Tesseract (79.1%), na mesma faixa do nosso pipeline.
 
+**Nota**: os 89.7% aqui são da mesma amostra de 50 páginas usada por todos os motores desta comparação (justo, mesmo teste pra todo mundo) -- não confundir com os 85.63% do full-corpus oficial (109 volumes, seção "Pipeline completo"), que é um número diferente medido em escala muito maior no mesmo checkpoint sub-treinado (5/30 épocas). Os dois são válidos, medem coisas em escalas diferentes.
+
 **Leitura em duas partes, não uma conclusão só**:
 1. **Reconhecimento** (`recorte`, bbox dada de graça): manga-ocr é forte de verdade -- 93.3%, levemente acima até do nosso pipeline (89.7%). Confirma que especialização de domínio (mangá) importa muito mais que a arquitetura genérica em si -- a Hipótese 1 não é "toda ferramenta de OCR é ruim nisso", é "ferramenta **genérica** é ruim nisso". Uma ferramenta especializada de terceiros já resolve bem essa parte específica.
 2. **Fim-a-fim** (`pagina`, sem bbox de graça): manga-ocr zera. Ele não tem detecção própria -- é um recognizer puro, feito pra receber uma região de fala já recortada (por design, não é um bug nem uma limitação injusta de teste). Jogar a página inteira nele é fora do que ele foi treinado pra fazer; ele "lê" a página toda como se fosse um bloco de texto só, sem achar as linhas.
