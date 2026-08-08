@@ -10,6 +10,7 @@ scipy
 matplotlib
 torch
 torchvision
+pandas
 # Local com GPU NVIDIA: o pip acima instala a build CPU-only por padrao no
 # Windows. Pra usar a GPU local em inferencia/avaliacao (Kaggle ja vem com
 # CUDA pronto, isso e' so pra rodar local), reinstalar com o indice certo:
