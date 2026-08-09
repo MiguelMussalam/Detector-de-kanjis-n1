@@ -316,3 +316,23 @@ Constrói o espelho do `real_n1`: em vez de "acerta kanji N1 real", mede "rejeit
 | Falso positivo (previu algum N1 específico) | 4.8% (1800/37681) |
 
 **Leitura**: existe sim um custo real em trocar o OUTROS pra 100% sintético -- 4.8% de falso positivo não é zero. Mas é um custo pequeno frente ao ganho: recall de N1 real saltou de 4.60%→96.98% (`real_n1`) e o recall do pipeline completo subiu de 88.1%→89.7% na mesma amostra. O trade-off vale a pena, e fica documentado com número, não só hipótese. Falsos positivos concentrados em algumas classes específicas (U+4E59 88x, U+53E5 61x, U+4F8D 36x, ...) -- não é ruído uniforme, sugere confusões visuais específicas, possível alvo de investigação futura se sobrar tempo.
+
+### GPU local com CUDA + treino local via notebook adaptado (2026-08-07/08)
+
+Limite semanal de GPU do Kaggle esgotado -- migrado o treino do classificador pra rodar localmente (RTX 3050 6GB, PyTorch reinstalado com build CUDA, ver `requirements.txt`). `notebooks/02_classifier_train.ipynb` adaptado pra detectar ambiente (Kaggle vs local) sozinho, pular clone/geração de dado já existente, e ganhou a opção `FINETUNE_FROM` (continuar de um checkpoint em vez de treinar do zero).
+
+**Achado de robustez**: a primeira tentativa de rodar localmente via `jupyter nbconvert --execute` falhou silenciosamente -- células com `!python -m ...` (shell magic do Jupyter) não propagam erro no Windows, o treino aparentemente não rodou nada (resultado.csv vazio) e a execução só travou de verdade bem depois, na célula de gráficos, por falta de `pandas` (dependência que faltava, adicionada). Corrigido trocando toda célula `!shell` por `subprocess.run(check=True)` -- agora erro real propaga e interrompe a notebook de forma visível, em vez de sumir sem rastro. Rodando de novo com o fix, o treino funcionou normalmente (GPU a 98-100% de utilização, épocas completando e sendo logadas).
+
+### Experimento `stem_leve=True` vs `False`, ambos convergidos (2026-08-08)
+
+Usando a folga de GPU local (sem limite de hora), testado se `stem_leve` (decisão tomada em 2026-07-25, mantida desde então) ainda vale a pena com a receita atual (`OUTROS_REAL_MIX=False` + fix do `crop_size`). Isolado corretamente -- **não** dá pra continuar (`CLF_FINETUNE_FROM`) de um checkpoint com `stem_leve` diferente do que está sendo testado, os pesos carregam sem erro de shape mas a arquitetura fica incoerente (mesmo bug histórico documentado em `manifest.md`), então `stem_leve=False` precisou ser um treino do zero.
+
+| | `stem_leve=True` (continuado do checkpoint de 08-05 até convergir, 11 épocas extras, early stopping) | `stem_leve=False` (do zero, 36 épocas, early stopping) |
+|---|---|---|
+| `real_n1_acc` | **96.73%** | 94.01% |
+| Rejeição de não-N1 real | **97.5%** (36749/37681) | 96.4% (36326/37681) |
+| Top-5 `real_n1` | **99.92%** | 98.64% |
+
+`stem_leve=True` vence nas duas métricas agora que os dois estão convergidos de verdade (não foi assim numa comparação intermediária antes de continuar o treino -- `stem_leve=True` só tinha 5 épocas ali, ganhava no reconhecimento mas perdia um pouco na rejeição). **Decisão: manter `stem_leve=True`**, confirma a decisão de 2026-07-25.
+
+**Achado secundário útil**: comparado ao checkpoint de 08-05 (época 5, não convergido), esse novo (`classifier_stem_convergido.pt`) tem `real_n1_acc` praticamente igual (96.73% vs 96.98%, dentro do ruído -- o reconhecimento já tinha saturado cedo) mas rejeição bem melhor (97.5% vs 95.2%) -- o treino adicional ajudou a generalizar melhor o limite de decisão OUTROS-vs-N1 mesmo sem melhorar mais o reconhecimento em si. Checkpoints preservados: `weights/backups/classifier_stem_convergido.pt` (novo, melhor) e `weights/backups/classifier_no_stem.pt` (referência, não promover).

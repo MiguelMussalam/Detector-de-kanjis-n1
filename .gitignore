@@ -1,4 +1,5 @@
 # project especific ignores
+CLAUDE.md
 data/
 assets/fonts/
 runs/
